@@ -1,0 +1,99 @@
+name: Build Windows installer
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Decide version
+        id: ver
+        shell: pwsh
+        run: |
+          if ("${{ github.ref_type }}" -eq "tag") { $v = "${{ github.ref_name }}".TrimStart("v") }
+          else { $v = "1.0.0-dev.${{ github.run_number }}" }
+          "version=$v" >> $env:GITHUB_OUTPUT
+          Write-Host "Version: $v"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt pyinstaller
+
+      - name: Stamp version into app
+        shell: pwsh
+        run: |
+          (Get-Content app.py -Raw -Encoding utf8) -replace 'APP_VERSION = "[^"]*"', 'APP_VERSION = "${{ steps.ver.outputs.version }}"' |
+            Set-Content app.py -Encoding utf8 -NoNewline
+
+      - name: Build exe (PyInstaller)
+        run: >
+          pyinstaller --noconfirm --clean --windowed --name WinResMon
+          --icon assets/icon.ico
+          --add-data "index.html;."
+          --add-data "static;static"
+          app.py
+
+      - name: Self-test the built exe
+        shell: pwsh
+        run: |
+          $env:WINRESMON_DATA = "$env:RUNNER_TEMP\wrm-data"
+          $env:WINRESMON_SELFTEST_OUT = "$env:RUNNER_TEMP\selftest.json"
+          $p = Start-Process -FilePath "dist\WinResMon\WinResMon.exe" -ArgumentList "--selftest" -Wait -PassThru
+          Get-Content $env:WINRESMON_SELFTEST_OUT -ErrorAction SilentlyContinue
+          if ($p.ExitCode -ne 0) { throw "selftest failed (exit $($p.ExitCode))" }
+
+      - name: Install Inno Setup
+        shell: pwsh
+        run: |
+          if (-not (Test-Path "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe")) {
+            choco install innosetup -y --no-progress
+          }
+
+      - name: Build installer (Inno Setup)
+        shell: pwsh
+        run: |
+          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" "/DMyAppVersion=${{ steps.ver.outputs.version }}" installer.iss
+          if ($LASTEXITCODE -ne 0) { throw "ISCC failed" }
+          Get-ChildItem Output
+
+      - name: Test silent install / uninstall
+        shell: pwsh
+        run: |
+          $setup = (Get-ChildItem Output\WinResMon-Setup-*.exe).FullName
+          $dir = "$env:RUNNER_TEMP\wrm-install"
+          Start-Process $setup -ArgumentList "/VERYSILENT","/SUPPRESSMSGBOXES","/NORESTART","/CURRENTUSER","/DIR=`"$dir`"" -Wait
+          if (-not (Test-Path "$dir\WinResMon.exe")) { throw "install failed" }
+          $env:WINRESMON_DATA = "$env:RUNNER_TEMP\wrm-data2"
+          $p = Start-Process "$dir\WinResMon.exe" -ArgumentList "--selftest" -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "installed exe selftest failed" }
+          Start-Process "$dir\unins000.exe" -ArgumentList "/VERYSILENT","/SUPPRESSMSGBOXES" -Wait
+          Start-Sleep 3
+          if (Test-Path "$dir\WinResMon.exe") { throw "uninstall failed" }
+          Write-Host "install / selftest / uninstall OK"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: WinResMon-Setup-${{ steps.ver.outputs.version }}
+          path: Output/*.exe
+
+      - name: Publish GitHub Release (tags only)
+        if: github.ref_type == 'tag'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: Output/*.exe
+          generate_release_notes: true

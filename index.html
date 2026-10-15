@@ -1,0 +1,416 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>WinResMon</title>
+<script src="/static/echarts.min.js"></script>
+<style>
+  :root{
+    --bg:#0f1218; --panel:#171b23; --panel2:#1d222c; --line:#2a303c;
+    --text:#e6e9ef; --muted:#8b93a3; --accent:#4cc2ff;
+    --cpu:#4cc2ff; --mem:#b48cff; --up:#ff9f5a; --down:#3ddc97; --rd:#ffd166; --wr:#ff6b8b;
+    --warn:#ffb020; --bad:#ff5470;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);font:14px/1.5 "Segoe UI","Yu Gothic UI","Meiryo",sans-serif}
+  header{display:flex;align-items:center;gap:16px;padding:12px 20px;border-bottom:1px solid var(--line);background:var(--panel);position:sticky;top:0;z-index:10}
+  header h1{font-size:16px;margin:0;font-weight:600;letter-spacing:.5px}
+  header .sys{color:var(--muted);font-size:12px;margin-left:auto;text-align:right}
+  .tabs{display:flex;gap:4px}
+  .tab{background:none;border:1px solid transparent;color:var(--muted);padding:6px 14px;border-radius:6px;cursor:pointer;font:inherit}
+  .tab.active{color:var(--text);background:var(--panel2);border-color:var(--line)}
+  main{padding:16px 20px;max-width:1500px;margin:0 auto}
+  .view{display:none}.view.active{display:block}
+  .grid{display:grid;gap:12px}
+  .kpis{grid-template-columns:repeat(auto-fit,minmax(180px,1fr))}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px 14px}
+  .card h3{margin:0 0 6px;font-size:12px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.6px}
+  .kpi .v{font-size:26px;font-weight:600;font-variant-numeric:tabular-nums}
+  .kpi .s{font-size:12px;color:var(--muted)}
+  .bar{height:6px;background:var(--panel2);border-radius:3px;overflow:hidden;margin-top:6px}
+  .bar>i{display:block;height:100%;width:0;transition:width .4s}
+  .charts{grid-template-columns:repeat(auto-fit,minmax(420px,1fr));margin-top:12px}
+  .chart{height:230px}
+  .two{grid-template-columns:1fr 1fr;margin-top:12px}
+  @media(max-width:900px){.two{grid-template-columns:1fr}.charts{grid-template-columns:1fr}}
+  table{width:100%;border-collapse:collapse;font-size:13px;font-variant-numeric:tabular-nums}
+  th,td{padding:5px 8px;border-bottom:1px solid var(--line);text-align:left;white-space:nowrap}
+  th{color:var(--muted);font-weight:500;font-size:12px}
+  td.num,th.num{text-align:right}
+  td.name{max-width:420px;overflow:hidden;text-overflow:ellipsis}
+  .drives .drv{display:grid;grid-template-columns:minmax(40px,auto) 1fr 230px;gap:10px;align-items:center;padding:6px 0}
+  .drives .drv .bar{height:10px;margin:0}
+  .muted{color:var(--muted)}
+  input,select,button.btn{background:var(--panel2);color:var(--text);border:1px solid var(--line);border-radius:6px;padding:6px 10px;font:inherit}
+  button.btn{cursor:pointer}
+  button.btn.primary{background:var(--accent);color:#04121c;border-color:var(--accent);font-weight:600}
+  button.btn.danger{color:var(--bad)}
+  button.btn:disabled{opacity:.5;cursor:default}
+  .row{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+  .scanbox .row+.row{margin-top:8px}
+  #treemap{height:560px}
+  .crumbs{font-size:13px;color:var(--muted);margin:6px 0;word-break:break-all}
+  .crumbs a{color:var(--accent);cursor:pointer;text-decoration:none}
+  .pos{color:var(--wr)}.neg{color:var(--down)}
+  .pill{display:inline-block;font-size:11px;padding:1px 7px;border-radius:9px;background:var(--panel2);border:1px solid var(--line);color:var(--muted)}
+  .snaplist{max-height:300px;overflow:auto}
+  .snaplist tr{cursor:pointer}
+  .snaplist tr.sel{background:#22394a}
+  .snaplist tr:hover{background:var(--panel2)}
+  .hint{font-size:12px;color:var(--muted)}
+</style>
+</head>
+<body>
+<header>
+  <h1>WinResMon</h1>
+  <div class="tabs">
+    <button class="tab active" data-v="live">リアルタイム</button>
+    <button class="tab" data-v="storage">ストレージ</button>
+  </div>
+  <div class="sys" id="sysinfo"></div>
+</header>
+
+<main>
+<!-- ================= リアルタイム ================= -->
+<section class="view active" id="v-live">
+  <div class="grid kpis">
+    <div class="card kpi"><h3>CPU</h3><div class="v" id="k-cpu">–</div><div class="s" id="k-cpu-s">&nbsp;</div><div class="bar"><i id="b-cpu" style="background:var(--cpu)"></i></div></div>
+    <div class="card kpi"><h3>メモリ</h3><div class="v" id="k-mem">–</div><div class="s" id="k-mem-s">&nbsp;</div><div class="bar"><i id="b-mem" style="background:var(--mem)"></i></div></div>
+    <div class="card kpi"><h3>ネットワーク ↓受信</h3><div class="v" id="k-down" style="color:var(--down)">–</div><div class="s" id="k-down-s">&nbsp;</div></div>
+    <div class="card kpi"><h3>ネットワーク ↑送信</h3><div class="v" id="k-up" style="color:var(--up)">–</div><div class="s" id="k-up-s">&nbsp;</div></div>
+    <div class="card kpi"><h3>ディスク I/O</h3><div class="v" id="k-disk">–</div><div class="s" id="k-disk-s">&nbsp;</div></div>
+  </div>
+
+  <div class="grid charts">
+    <div class="card"><h3>CPU 使用率（直近2分）</h3><div class="chart" id="c-cpu"></div></div>
+    <div class="card"><h3>メモリ使用率（直近2分）</h3><div class="chart" id="c-mem"></div></div>
+    <div class="card"><h3>ネットワーク（直近2分）</h3><div class="chart" id="c-net"></div></div>
+    <div class="card"><h3>コア別 CPU 使用率</h3><div class="chart" id="c-core"></div></div>
+  </div>
+
+  <div class="grid two">
+    <div class="card"><h3>CPU 上位プロセス</h3><table id="t-cpu"></table></div>
+    <div class="card"><h3>メモリ上位プロセス</h3><table id="t-mem"></table></div>
+  </div>
+
+  <div class="grid two">
+    <div class="card"><h3>ネットワークアダプター</h3><table id="t-nic"></table></div>
+    <div class="card drives"><h3>ドライブ</h3><div id="drives"></div></div>
+  </div>
+</section>
+
+<!-- ================= ストレージ ================= -->
+<section class="view" id="v-storage">
+  <div class="grid two" style="margin-top:0">
+    <div class="card scanbox">
+      <h3>新しいスキャン（実行時点のスナップショットを保存）</h3>
+      <div class="row">
+        <select id="drvsel"></select>
+        <input id="scanpath" style="flex:1;min-width:220px" placeholder="例: C:\Users\you">
+      </div>
+      <div class="row">
+        <label class="muted">保持する階層</label>
+        <select id="depth"><option>2</option><option>3</option><option selected>4</option><option>5</option><option>6</option></select>
+        <input id="note" placeholder="メモ（任意）" style="flex:1;min-width:140px">
+        <button class="btn primary" id="btn-scan">スキャン開始</button>
+        <button class="btn danger" id="btn-cancel" disabled>中止</button>
+      </div>
+      <div class="row" style="margin-top:10px"><span id="scanstat" class="hint">合計容量は全階層を集計します。階層数は表示用ツリーの深さです。</span></div>
+    </div>
+    <div class="card">
+      <h3>保存済みスナップショット</h3>
+      <div class="snaplist"><table id="t-snaps"></table></div>
+      <div class="row" style="margin-top:8px">
+        <label class="muted">比較対象</label>
+        <select id="cmpsel" style="flex:1"><option value="">（比較しない）</option></select>
+        <button class="btn danger" id="btn-del">選択中を削除</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="card" style="margin-top:12px">
+    <div class="row">
+      <h3 style="margin:0">容量マップ</h3>
+      <span id="snapmeta" class="pill">スナップショット未選択</span>
+      <span class="hint" style="margin-left:auto">クリックで下の階層へ／パンくずで戻る</span>
+    </div>
+    <div class="crumbs" id="crumbs"></div>
+    <div id="treemap"></div>
+  </div>
+
+  <div class="grid two">
+    <div class="card"><h3 id="listtitle">この階層の内訳</h3><div style="max-height:520px;overflow:auto"><table id="t-children"></table></div></div>
+    <div class="card"><h3 id="difftitle">差分（比較対象を選ぶと表示）</h3><table id="t-diff"></table></div>
+  </div>
+</section>
+</main>
+
+<script>
+// ---------- 共通 ----------
+const $ = s => document.querySelector(s);
+const css = v => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
+function fmtB(b, d=1){ if(b==null) return '–'; const u=['B','KB','MB','GB','TB']; let i=0; let n=Math.abs(b); while(n>=1024&&i<u.length-1){n/=1024;i++} return (b<0?'-':'')+n.toFixed(i?d:0)+' '+u[i]; }
+const fmtRate = b => fmtB(b) + '/s';
+const esc = s => String(s).replace(/[&<>"]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+async function api(path, body){
+  const r = await fetch(path, body ? {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)} : {});
+  return r.json();
+}
+document.querySelectorAll('.tab').forEach(t => t.onclick = () => {
+  document.querySelectorAll('.tab').forEach(x=>x.classList.toggle('active', x===t));
+  document.querySelectorAll('.view').forEach(v=>v.classList.toggle('active', v.id==='v-'+t.dataset.v));
+  Object.values(charts).forEach(c=>c.resize()); if(tm) tm.resize();
+  if(t.dataset.v==='storage') loadSnapshots();
+});
+
+// ---------- リアルタイム ----------
+const N = 120;
+const hist = {t:[], cpu:[], mem:[], up:[], down:[]};
+const charts = {};
+const axisStyle = {axisLine:{lineStyle:{color:'#2a303c'}}, axisLabel:{color:'#8b93a3'}, splitLine:{lineStyle:{color:'#222833'}}};
+function lineChart(id, series, yOpt){
+  const c = echarts.init(document.getElementById(id));
+  c.setOption({
+    animation:false, grid:{left:58,right:12,top:24,bottom:24},
+    tooltip:{trigger:'axis', valueFormatter: yOpt.fmt},
+    legend: series.length>1 ? {textStyle:{color:'#8b93a3'}, top:0, right:0} : undefined,
+    xAxis:{type:'category', boundaryGap:false, data:[], ...axisStyle, axisLabel:{color:'#8b93a3', interval:29}},
+    yAxis:{type:'value', min:0, max:yOpt.max, ...axisStyle, axisLabel:{color:'#8b93a3', formatter:yOpt.axisFmt}},
+    series: series.map(s=>({name:s.name, type:'line', showSymbol:false, smooth:true, data:[],
+      lineStyle:{width:2, color:s.color}, itemStyle:{color:s.color},
+      areaStyle:{color:new echarts.graphic.LinearGradient(0,0,0,1,[{offset:0,color:s.color+'66'},{offset:1,color:s.color+'05'}])}}))
+  });
+  charts[id] = c; return c;
+}
+lineChart('c-cpu', [{name:'CPU', color:css('--cpu')}], {max:100, fmt:v=>v.toFixed(1)+' %', axisFmt:'{value}%'});
+lineChart('c-mem', [{name:'メモリ', color:css('--mem')}], {max:100, fmt:v=>v.toFixed(1)+' %', axisFmt:'{value}%'});
+lineChart('c-net', [{name:'受信', color:css('--down')},{name:'送信', color:css('--up')}], {fmt:v=>fmtRate(v), axisFmt:v=>fmtB(v,0)});
+charts['c-core'] = echarts.init($('#c-core'));
+charts['c-core'].setOption({animation:true, grid:{left:40,right:12,top:12,bottom:24}, tooltip:{trigger:'axis', valueFormatter:v=>v.toFixed(1)+' %'},
+  xAxis:{type:'category', data:[], ...axisStyle}, yAxis:{type:'value', min:0, max:100, ...axisStyle},
+  series:[{type:'bar', data:[], barMaxWidth:24, itemStyle:{borderRadius:[3,3,0,0]}}]});
+window.addEventListener('resize', ()=>{ Object.values(charts).forEach(c=>c.resize()); if(tm) tm.resize(); });
+
+function push(arr, v){ arr.push(v); if(arr.length>N) arr.shift(); }
+function procTable(el, rows, key){
+  el.innerHTML = '<tr><th>プロセス</th><th class="num">PID</th><th class="num">CPU</th><th class="num">メモリ</th></tr>' +
+    rows.map(p=>`<tr><td class="name">${esc(p.name)}</td><td class="num muted">${p.pid}</td><td class="num">${p.cpu.toFixed(1)}%</td><td class="num">${fmtB(p.mem)}</td></tr>`).join('');
+}
+function levelColor(p){ return p>=90 ? css('--bad') : p>=75 ? css('--warn') : null; }
+
+async function tick(){
+  let s;
+  try { s = await api('/api/stats'); } catch(e){ return; }
+  if(!s.cpu) return;
+  const now = new Date(s.time*1000).toLocaleTimeString('ja-JP',{hour12:false});
+  push(hist.t, now); push(hist.cpu, s.cpu.total); push(hist.mem, s.memory.percent);
+  push(hist.up, s.network.up); push(hist.down, s.network.down);
+
+  $('#k-cpu').textContent = s.cpu.total.toFixed(1)+' %';
+  $('#k-cpu-s').textContent = (s.cpu.freq_mhz ? (s.cpu.freq_mhz/1000).toFixed(2)+' GHz・' : '') + s.proc_count+' プロセス';
+  $('#b-cpu').style.width = s.cpu.total+'%'; $('#b-cpu').style.background = levelColor(s.cpu.total) || css('--cpu');
+  $('#k-mem').textContent = s.memory.percent.toFixed(1)+' %';
+  $('#k-mem-s').textContent = `${fmtB(s.memory.used)} / ${fmtB(s.memory.total)}・スワップ ${s.memory.swap_percent.toFixed(0)}%`;
+  $('#b-mem').style.width = s.memory.percent+'%'; $('#b-mem').style.background = levelColor(s.memory.percent) || css('--mem');
+  $('#k-down').textContent = fmtRate(s.network.down); $('#k-down-s').textContent = ((s.network.down*8)/1e6).toFixed(2)+' Mbps';
+  $('#k-up').textContent = fmtRate(s.network.up); $('#k-up-s').textContent = ((s.network.up*8)/1e6).toFixed(2)+' Mbps';
+  $('#k-disk').textContent = fmtRate(s.disk_io.read + s.disk_io.write);
+  $('#k-disk-s').innerHTML = `<span style="color:var(--rd)">読 ${fmtRate(s.disk_io.read)}</span>　<span style="color:var(--wr)">書 ${fmtRate(s.disk_io.write)}</span>`;
+
+  charts['c-cpu'].setOption({xAxis:{data:hist.t}, series:[{data:hist.cpu}]});
+  charts['c-mem'].setOption({xAxis:{data:hist.t}, series:[{data:hist.mem}]});
+  charts['c-net'].setOption({xAxis:{data:hist.t}, series:[{data:hist.down},{data:hist.up}]});
+  charts['c-core'].setOption({xAxis:{data:s.cpu.per_core.map((_,i)=>'#'+i)},
+    series:[{data:s.cpu.per_core.map(v=>({value:v, itemStyle:{color: levelColor(v) || css('--cpu')}}))}]});
+
+  procTable($('#t-cpu'), s.top_cpu); procTable($('#t-mem'), s.top_mem);
+  $('#t-nic').innerHTML = '<tr><th>アダプター</th><th class="num">↓受信</th><th class="num">↑送信</th></tr>' +
+    s.network.nics.sort((a,b)=>(b.up+b.down)-(a.up+a.down)).map(n=>`<tr><td class="name">${esc(n.name)}</td><td class="num">${fmtRate(n.down)}</td><td class="num">${fmtRate(n.up)}</td></tr>`).join('');
+}
+setInterval(tick, 1000); tick();
+
+let drivesCache = [];
+async function loadDrives(){
+  drivesCache = await api('/api/drives');
+  $('#drives').innerHTML = drivesCache.map(d=>{
+    const c = levelColor(d.percent) || css('--accent');
+    return `<div class="drv"><b>${esc(d.mount)}</b><div class="bar"><i style="width:${d.percent}%;background:${c}"></i></div>
+      <span class="muted">${fmtB(d.used)} / ${fmtB(d.total)}（空き ${fmtB(d.free)}）</span></div>`;
+  }).join('');
+  const sel = $('#drvsel'); const cur = sel.value;
+  sel.innerHTML = '<option value="">ドライブ選択…</option>' + drivesCache.map(d=>`<option>${esc(d.mount)}</option>`).join('');
+  sel.value = cur;
+}
+$('#drvsel').onchange = e => { if(e.target.value) $('#scanpath').value = e.target.value; };
+loadDrives(); setInterval(loadDrives, 30000);
+
+api('/api/system').then(s => { $('#sysinfo').innerHTML = `${esc(s.hostname)}　${s.cores_physical}コア / ${s.cores_logical}スレッド<br>${esc(s.os||'')}　起動: ${s.boot_time}`; $("#scanstat").title = "保存先: " + (s.data_dir||""); document.title = "WinResMon " + (s.app_version||""); });
+
+// ---------- ストレージ ----------
+let tm = null, curSnap = null, cmpSnap = null, focusNode = null;
+let snaps = [];
+
+async function loadSnapshots(selectId){
+  snaps = await api('/api/snapshots');
+  const t = $('#t-snaps');
+  if(!snaps.length){ t.innerHTML = '<tr><td class="muted">まだスナップショットがありません。左でスキャンを実行してください。</td></tr>'; }
+  else t.innerHTML = '<tr><th>日時</th><th>対象</th><th class="num">合計</th><th>メモ</th></tr>' + snaps.map(s=>
+    `<tr data-id="${s.id}" class="${curSnap && curSnap.id===s.id?'sel':''}"><td>${s.created}${s.cancelled?' <span class="pill">中断</span>':''}</td><td class="name">${esc(s.root)}</td><td class="num">${fmtB(s.size)}</td><td class="name muted">${esc(s.note)}</td></tr>`).join('');
+  t.querySelectorAll('tr[data-id]').forEach(tr => tr.onclick = () => openSnapshot(tr.dataset.id));
+  updateCmpSelect();
+  if(selectId) openSnapshot(selectId);
+}
+function updateCmpSelect(){
+  const sel = $('#cmpsel'); const cur = sel.value;
+  const same = curSnap ? snaps.filter(s=>s.id!==curSnap.id && s.root.toLowerCase()===curSnap.root.toLowerCase()) : [];
+  sel.innerHTML = '<option value="">（比較しない）</option>' + same.map(s=>`<option value="${s.id}">${s.created}${s.note?'　'+esc(s.note):''}</option>`).join('');
+  if(same.some(s=>s.id===cur)) sel.value = cur; else { sel.value=''; cmpSnap=null; }
+}
+async function openSnapshot(id){
+  curSnap = await api('/api/snapshot?id='+encodeURIComponent(id));
+  focusNode = curSnap.tree;
+  document.querySelectorAll('#t-snaps tr').forEach(tr=>tr.classList.toggle('sel', tr.dataset.id===id));
+  const d = curSnap.disk;
+  $('#snapmeta').textContent = `${curSnap.created}　${curSnap.root}　合計 ${fmtB(curSnap.tree.size)}・${curSnap.tree.files.toLocaleString()} ファイル` +
+    (d ? `　（ドライブ使用 ${fmtB(d.used)} / ${fmtB(d.total)}）` : '') + (curSnap.errors ? `　アクセス不可 ${curSnap.errors}件` : '');
+  updateCmpSelect();
+  await loadCompare();
+  renderTreemap();
+}
+$('#cmpsel').onchange = async () => { await loadCompare(); renderFocus(); };
+async function loadCompare(){
+  const id = $('#cmpsel').value;
+  cmpSnap = id ? await api('/api/snapshot?id='+encodeURIComponent(id)) : null;
+}
+
+const palette = ['#4cc2ff','#b48cff','#3ddc97','#ff9f5a','#ffd166','#ff6b8b','#5ad1c8','#8fa8ff','#e58fff','#a3d65c'];
+function toEc(n){
+  const o = {name:n.name, value:n.size, path:n.path, files:n.files};
+  if(n.is_files || n.is_other) o.itemStyle = {color:'#3a4150'};
+  if(n.children) o.children = n.children.map(toEc);
+  return o;
+}
+function renderTreemap(){
+  if(!tm){
+    tm = echarts.init($('#treemap'));
+    tm.on('click', p => {
+      if(!p.treePathInfo) return;
+      // クリックした領域を含む、1つ下の階層のフォルダへドリルダウン
+      const chain = findChain(p.treePathInfo);
+      const target = chain[1];
+      if(target && target.children){ focusNode = target; renderTreemap(); }
+    });
+  }
+  tm.setOption({
+    tooltip:{formatter: p => {
+      const pct = curSnap.tree.size ? (p.value/curSnap.tree.size*100).toFixed(1) : 0;
+      return `<b>${esc(p.name)}</b><br>${fmtB(p.value)}（全体の ${pct}%）<br>${(p.data.files||0).toLocaleString()} ファイル<br><span style="color:#999">${esc(p.data.path||'')}</span>`;
+    }},
+    series:[{
+      type:'treemap', data:(focusNode.children||[]).map(toEc), roam:false, nodeClick:false,
+      leafDepth:2, visibleMin:300, top:0, left:0, right:0, bottom:0,
+      breadcrumb:{show:false},
+      label:{show:true, formatter: p => `${p.name}\n${fmtB(p.value)}`, fontSize:12, color:'#0b0e13'},
+      upperLabel:{show:true, height:22, color:'#e6e9ef', formatter: p => `${p.name}　${fmtB(p.value)}`},
+      levels:[
+        {itemStyle:{borderColor:'#0f1218', borderWidth:0, gapWidth:2}, upperLabel:{show:false}},
+        {color:palette, itemStyle:{borderColor:'#0f1218', borderWidth:4, gapWidth:2}, colorMappingBy:'index'},
+        {colorSaturation:[0.35,0.6], itemStyle:{borderColorSaturation:0.6, gapWidth:1, borderWidth:2}},
+        {colorSaturation:[0.3,0.5], itemStyle:{borderColorSaturation:0.5, gapWidth:1}}
+      ]
+    }]
+  }, true);
+  renderFocus();
+}
+function findChain(info){
+  // info[0] は表示中のルート（= focusNode）
+  const chain = [focusNode]; let node = focusNode;
+  for(let i=1;i<info.length;i++){
+    const c = (node.children||[]).find(x=>x.name===info[i].name);
+    if(!c) break; chain.push(c); node = c;
+  }
+  return chain;
+}
+function pathTo(target){
+  const out=[]; (function walk(n, acc){ acc=[...acc,n]; if(n===target){out.push(...acc); return true;} return (n.children||[]).some(c=>walk(c,acc)); })(curSnap.tree, []);
+  return out;
+}
+function renderFocus(){
+  if(!curSnap) return;
+  const chain = pathTo(focusNode);
+  $('#crumbs').innerHTML = chain.map((n,i)=>`<a data-i="${i}">${esc(n.name)}</a>`).join(' › ');
+  $('#crumbs').querySelectorAll('a').forEach(a => a.onclick = () => {
+    focusNode = chain[+a.dataset.i];
+    renderTreemap();
+  });
+  // 内訳テーブル
+  const kids = focusNode.children || [];
+  const cmpIdx = cmpSnap ? flatten(cmpSnap.tree) : null;
+  $('#listtitle').textContent = `この階層の内訳：${focusNode.path}`;
+  $('#t-children').innerHTML = '<tr><th>名前</th><th class="num">サイズ</th><th class="num">割合</th><th class="num">ファイル数</th>'+(cmpIdx?'<th class="num">比較時から</th>':'')+'</tr>' +
+    (kids.length ? kids.map(k=>{
+      const pct = focusNode.size ? k.size/focusNode.size*100 : 0;
+      let diff = '';
+      if(cmpIdx){ const key = keyOf(k); const old = cmpIdx.get(key); const dv = old==null ? null : k.size-old;
+        diff = `<td class="num ${dv>0?'pos':dv<0?'neg':''}">${dv==null?'<span class="pill">新規</span>':(dv>0?'+':'')+fmtB(dv)}</td>`; }
+      return `<tr ${k.children?`data-ci="${kids.indexOf(k)}" style="cursor:pointer"`:''}><td class="name">${k.children?'📁 ':''}${esc(k.name)}</td><td class="num">${fmtB(k.size)}</td>
+        <td class="num"><div class="bar" style="width:80px;display:inline-block;vertical-align:middle;margin:0 6px 0 0"><i style="width:${pct}%;background:var(--accent)"></i></div>${pct.toFixed(1)}%</td>
+        <td class="num muted">${k.files.toLocaleString()}</td>${diff}</tr>`;}).join('')
+     : '<tr><td class="muted" colspan="5">これより下の階層は保持していません（階層数を増やして再スキャン）</td></tr>');
+  $('#t-children').querySelectorAll('tr[data-ci]').forEach(tr => tr.onclick = () => { focusNode = kids[+tr.dataset.ci]; renderTreemap(); });
+  renderDiff();
+}
+function keyOf(n){ return (n.path + (n.is_files?'|files':n.is_other?'|other':'')).toLowerCase(); }
+function flatten(tree){
+  const m = new Map(); (function w(n,d){ m.set(keyOf(n), n.size); m.set(keyOf(n)+'#d', d); (n.children||[]).forEach(c=>w(c,d+1)); })(tree,0); return m;
+}
+function renderDiff(){
+  const t = $('#t-diff');
+  if(!cmpSnap){ $('#difftitle').textContent='差分（比較対象を選ぶと表示）'; t.innerHTML='<tr><td class="muted">同じフォルダを対象にした別時点のスナップショットを右上で選ぶと、増減の大きいフォルダを一覧します。</td></tr>'; return; }
+  const a = flatten(cmpSnap.tree);
+  const rows = [];
+  (function w(n){ if(!n.is_other){ const old = a.get(keyOf(n)); rows.push({n, old, d: n.size - (old||0)}); } (n.children||[]).forEach(w); })(curSnap.tree);
+  const total = curSnap.tree.size - cmpSnap.tree.size;
+  const top = rows.filter(r=>r.n!==curSnap.tree && r.d!==0).sort((x,y)=>Math.abs(y.d)-Math.abs(x.d)).slice(0,25);
+  $('#difftitle').innerHTML = `差分：${cmpSnap.created} → ${curSnap.created}　<span class="${total>0?'pos':'neg'}">${total>0?'+':''}${fmtB(total)}</span>`;
+  t.innerHTML = '<tr><th>フォルダ</th><th class="num">以前</th><th class="num">現在</th><th class="num">増減</th></tr>' +
+    top.map(r=>`<tr><td class="name" title="${esc(r.n.path)}">${esc(r.n.is_files ? r.n.path+'（直下ファイル）' : r.n.path)}</td><td class="num muted">${r.old==null?'—':fmtB(r.old)}</td><td class="num">${fmtB(r.n.size)}</td><td class="num ${r.d>0?'pos':'neg'}">${r.d>0?'+':''}${fmtB(r.d)}</td></tr>`).join('');
+}
+
+// スキャン操作
+let pollTimer = null;
+$('#btn-scan').onclick = async () => {
+  const path = $('#scanpath').value.trim();
+  if(!path){ alert('スキャンするフォルダを入力してください'); return; }
+  const r = await api('/api/scan', {path, depth: +$('#depth').value, note: $('#note').value});
+  if(!r.ok){ alert(r.message); return; }
+  $('#btn-scan').disabled = true; $('#btn-cancel').disabled = false;
+  pollTimer = setInterval(pollScan, 500);
+};
+$('#btn-cancel').onclick = () => api('/api/scan/cancel', {});
+$('#btn-del').onclick = async () => {
+  if(!curSnap || !confirm(`${curSnap.created} のスナップショットを削除しますか？`)) return;
+  await api('/api/snapshot/delete', {id: curSnap.id});
+  curSnap = null; cmpSnap = null; if(tm) tm.clear();
+  $('#snapmeta').textContent='スナップショット未選択'; $('#crumbs').innerHTML=''; $('#t-children').innerHTML=''; renderDiff();
+  loadSnapshots();
+};
+async function pollScan(){
+  const s = await api('/api/scan/status');
+  if(s.running){
+    const sec = ((Date.now()/1000) - s.started).toFixed(0);
+    $('#scanstat').innerHTML = `スキャン中… ${sec}秒　${s.files.toLocaleString()} ファイル / ${s.dirs.toLocaleString()} フォルダ　${fmtB(s.bytes)}<br><span class="muted">${esc(s.current)}</span>`;
+    return;
+  }
+  clearInterval(pollTimer);
+  $('#btn-scan').disabled = false; $('#btn-cancel').disabled = true;
+  if(s.error){ $('#scanstat').textContent = 'エラー: '+s.error; return; }
+  $('#scanstat').textContent = s.cancelled ? '中止しました（途中までの結果を保存）' : '完了しました';
+  loadSnapshots(s.snapshot);
+}
+// 画面を開いた時点でスキャン中なら進捗を追う
+api('/api/scan/status').then(s => { if(s.running){ $('#btn-scan').disabled=true; $('#btn-cancel').disabled=false; pollTimer=setInterval(pollScan,500);} });
+</script>
+</body>
+</html>

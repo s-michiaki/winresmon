@@ -1,0 +1,7 @@
+snapshots/
+build/
+dist/
+Output/
+__pycache__/
+*.spec
+winresmon.log
