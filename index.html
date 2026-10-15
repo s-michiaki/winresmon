@@ -116,6 +116,10 @@
         <button class="btn primary" id="btn-scan">スキャン開始</button>
         <button class="btn danger" id="btn-cancel" disabled>中止</button>
       </div>
+      <div class="row" id="elev-row" style="margin-top:8px;display:none">
+        <span class="hint" style="flex:1">通常権限ではシステムフォルダなど一部が読めず、容量に含まれません。</span>
+        <button class="btn" id="btn-elev">🛡 管理者として再起動</button>
+      </div>
       <div class="row" style="margin-top:10px"><span id="scanstat" class="hint">合計容量は全階層を集計します。階層数は表示用ツリーの深さです。</span></div>
     </div>
     <div class="card">
@@ -245,7 +249,9 @@ async function loadDrives(){
 $('#drvsel').onchange = e => { if(e.target.value) $('#scanpath').value = e.target.value; };
 loadDrives(); setInterval(loadDrives, 30000);
 
-api('/api/system').then(s => { $('#sysinfo').innerHTML = `${esc(s.hostname)}　${s.cores_physical}コア / ${s.cores_logical}スレッド<br>${esc(s.os||'')}　起動: ${s.boot_time}`; $("#scanstat").title = "保存先: " + (s.data_dir||""); document.title = "WinResMon " + (s.app_version||""); });
+api('/api/system').then(s => {
+  if(s.can_elevate) $('#elev-row').style.display = 'flex';
+  if(s.is_admin) $('header h1').insertAdjacentHTML('afterend', '<span class="pill" style="color:var(--warn);border-color:var(--warn)">管理者</span>'); $('#sysinfo').innerHTML = `${esc(s.hostname)}　${s.cores_physical}コア / ${s.cores_logical}スレッド<br>${esc(s.os||'')}　起動: ${s.boot_time}`; $("#scanstat").title = "保存先: " + (s.data_dir||""); document.title = "WinResMon " + (s.app_version||""); });
 
 // ---------- ストレージ ----------
 let tm = null, curSnap = null, cmpSnap = null, focusNode = null;
@@ -387,6 +393,12 @@ $('#btn-scan').onclick = async () => {
   if(!r.ok){ alert(r.message); return; }
   $('#btn-scan').disabled = true; $('#btn-cancel').disabled = false;
   pollTimer = setInterval(pollScan, 500);
+};
+$('#btn-elev').onclick = async () => {
+  $('#btn-elev').disabled = true;
+  const r = await api('/api/elevate', {});
+  if(r.ok){ $('#scanstat').textContent = '管理者として起動し直しています…（このウィンドウは閉じます）'; }
+  else { $('#btn-elev').disabled = false; alert(r.message); }
 };
 $('#btn-cancel').onclick = () => api('/api/scan/cancel', {});
 $('#btn-del').onclick = async () => {

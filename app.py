@@ -167,6 +167,33 @@ class StatsCollector:
             return dict(self.latest)
 
 
+def is_admin():
+    """Windows: 管理者権限で動いているか。Windows 以外は root かどうか"""
+    if sys.platform == "win32":
+        try:
+            import ctypes
+            return bool(ctypes.windll.shell32.IsUserAnAdmin())
+        except Exception:
+            return False
+    return hasattr(os, "geteuid") and os.geteuid() == 0
+
+
+def relaunch_elevated():
+    """UAC の確認を出して、管理者権限で自分自身を起動し直す。成功したら True"""
+    if sys.platform != "win32":
+        return False
+    import ctypes
+    import subprocess
+    args = [a for a in sys.argv[1:] if a != "--elevate"]
+    if FROZEN:
+        exe, params = sys.executable, subprocess.list2cmdline(args)
+    else:
+        exe, params = sys.executable, subprocess.list2cmdline([os.path.abspath(__file__)] + args)
+    # 戻り値が 32 より大きければ起動成功（UAC でキャンセルされると 5 などが返る）
+    rc = ctypes.windll.shell32.ShellExecuteW(None, "runas", exe, params, None, 1)
+    return rc > 32
+
+
 def system_info():
     boot = datetime.fromtimestamp(psutil.boot_time())
     return {
@@ -177,6 +204,8 @@ def system_info():
         "boot_time": boot.strftime("%Y-%m-%d %H:%M:%S"),
         "platform": sys.platform,
         "app_version": APP_VERSION,
+        "is_admin": is_admin(),
+        "can_elevate": sys.platform == "win32" and not is_admin(),
         "data_dir": str(DATA_DIR),
     }
 
@@ -435,6 +464,12 @@ class Handler(BaseHTTPRequestHandler):
         elif u.path == "/api/scan/cancel":
             scanner.cancel()
             self._json({"ok": True})
+        elif u.path == "/api/elevate":
+            ok = relaunch_elevated()
+            self._json({"ok": ok, "message": "" if ok else "管理者として起動できませんでした（キャンセルされたか、権限がありません）"})
+            if ok:
+                # 新しいウィンドウが立ち上がるので、こちらは少し待って終了
+                threading.Timer(0.8, lambda: os._exit(0)).start()
         elif u.path == "/api/snapshot/delete":
             self._json({"ok": delete_snapshot(data.get("id", ""))})
         else:
@@ -510,6 +545,12 @@ def main():
     global collector
     if "--selftest" in sys.argv:
         sys.exit(selftest())
+
+    # スタートメニュー「管理者として起動」から呼ばれたとき
+    if "--elevate" in sys.argv and not is_admin():
+        if relaunch_elevated():
+            return
+        print("管理者として起動できなかったため、通常権限で起動します")
 
     collector = StatsCollector(1.0)
     server = _make_server()

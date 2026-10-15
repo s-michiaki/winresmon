@@ -17,9 +17,8 @@ AppPublisher=shaekman
 DefaultDirName={autopf}\{#MyAppName}
 DefaultGroupName={#MyAppName}
 DisableProgramGroupPage=yes
-; 管理者権限なしで「自分だけ」にインストール可能（ダイアログで全ユーザーも選べる）
+; 常に「自分だけ」にインストール（管理者権限・UAC 確認は不要）
 PrivilegesRequired=lowest
-PrivilegesRequiredOverridesAllowed=dialog
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 OutputDir=Output
@@ -44,6 +43,7 @@ Source: "dist\WinResMon\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdir
 [Icons]
 Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
 Name: "{group}\{#MyAppName}（ブラウザで開く）"; Filename: "{app}\{#MyAppExeName}"; Parameters: "--browser"
+Name: "{group}\{#MyAppName}（管理者として起動）"; Filename: "{app}\{#MyAppExeName}"; Parameters: "--elevate"
 Name: "{group}\{cm:UninstallProgram,{#MyAppName}}"; Filename: "{uninstallexe}"
 Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
 
