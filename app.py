@@ -59,6 +59,8 @@ except ImportError:
     print("psutil が必要です: pip install psutil")
     sys.exit(1)
 
+from gpu import GpuMonitor
+
 HOST = "127.0.0.1"
 PORT = int(os.environ.get("WINRESMON_PORT", "8765"))
 
@@ -77,6 +79,12 @@ class StatsCollector:
         self._prev_disk = psutil.disk_io_counters()
         self._prev_t = time.time()
         psutil.cpu_percent(percpu=True)  # 初回呼び出しは0を返すため空打ち
+        try:
+            self.gpu = GpuMonitor()
+        except Exception as e:
+            print("GPU monitor disabled:", e)
+            self.gpu = None
+        self._pname = {}
         t = threading.Thread(target=self._loop, daemon=True)
         t.start()
 
@@ -141,6 +149,15 @@ class StatsCollector:
         top_cpu = sorted(procs, key=lambda x: x["cpu"], reverse=True)[:8]
         top_mem = sorted(procs, key=lambda x: x["mem"], reverse=True)[:8]
 
+        # GPU
+        names = {p["pid"]: p["name"] for p in procs}
+        gpus, gpu_procs = [], []
+        if self.gpu:
+            try:
+                gpus, gpu_procs = self.gpu.sample(lambda pid: names.get(pid, str(pid)))
+            except Exception as e:
+                print("gpu sample error:", e)
+
         data = {
             "time": now,
             "cpu": {
@@ -157,6 +174,8 @@ class StatsCollector:
             "disk_io": {"read": read_bps, "write": write_bps},
             "top_cpu": top_cpu,
             "top_mem": top_mem,
+            "gpus": gpus,
+            "gpu_procs": gpu_procs,
             "proc_count": len(procs),
         }
         with self.lock:
@@ -504,6 +523,10 @@ def selftest():
         stats = json.loads(body)
         assert st == 200 and "cpu" in stats and "memory" in stats, "stats"
         result["steps"].append(f"stats ok cpu={stats['cpu']['total']:.1f}% mem={stats['memory']['percent']}%")
+
+        gstats = stats.get("gpus", [])
+        result["steps"].append(f"gpu ok: {len(gstats)} adapter(s) {[g['name'] for g in gstats]}")
+        result["gpu_debug"] = GpuMonitor().debug()
 
         st, body = get("/")
         assert st == 200 and b"WinResMon" in body, "index"

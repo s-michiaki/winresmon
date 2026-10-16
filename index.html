@@ -10,7 +10,7 @@
     --bg:#0f1218; --panel:#171b23; --panel2:#1d222c; --line:#2a303c;
     --text:#e6e9ef; --muted:#8b93a3; --accent:#4cc2ff;
     --cpu:#4cc2ff; --mem:#b48cff; --up:#ff9f5a; --down:#3ddc97; --rd:#ffd166; --wr:#ff6b8b;
-    --warn:#ffb020; --bad:#ff5470;
+    --warn:#ffb020; --bad:#ff5470; --gpu:#2dd4bf; --gpu2:#f5c542;
   }
   *{box-sizing:border-box}
   body{margin:0;background:var(--bg);color:var(--text);font:14px/1.5 "Segoe UI","Yu Gothic UI","Meiryo",sans-serif}
@@ -59,6 +59,17 @@
   .snaplist tr.sel{background:#22394a}
   .snaplist tr:hover{background:var(--panel2)}
   .hint{font-size:12px;color:var(--muted)}
+  .gpu-card{padding:10px 0;border-bottom:1px solid var(--line)}
+  .gpu-card:last-child{border-bottom:0}
+  .gpu-head{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap}
+  .gpu-head b{font-size:14px}
+  .gpu-head .u{margin-left:auto;font-size:22px;font-weight:600;font-variant-numeric:tabular-nums}
+  .meter{display:grid;grid-template-columns:120px 1fr 160px;gap:10px;align-items:center;font-size:12px;margin-top:6px}
+  .meter .bar{margin:0;height:8px}
+  .meter span:last-child{text-align:right;font-variant-numeric:tabular-nums}
+  .gpu-extra{display:flex;flex-wrap:wrap;gap:6px 16px;margin-top:8px;font-size:12px;color:var(--muted)}
+  .gpu-extra b{color:var(--text);font-weight:500}
+  .hide{display:none!important}
 </style>
 </head>
 <body>
@@ -79,6 +90,7 @@
     <div class="card kpi"><h3>メモリ</h3><div class="v" id="k-mem">–</div><div class="s" id="k-mem-s">&nbsp;</div><div class="bar"><i id="b-mem" style="background:var(--mem)"></i></div></div>
     <div class="card kpi"><h3>ネットワーク ↓受信</h3><div class="v" id="k-down" style="color:var(--down)">–</div><div class="s" id="k-down-s">&nbsp;</div></div>
     <div class="card kpi"><h3>ネットワーク ↑送信</h3><div class="v" id="k-up" style="color:var(--up)">–</div><div class="s" id="k-up-s">&nbsp;</div></div>
+    <div class="card kpi hide" id="kpi-gpu"><h3>GPU</h3><div class="v" id="k-gpu">–</div><div class="s" id="k-gpu-s">&nbsp;</div><div class="bar"><i id="b-gpu" style="background:var(--gpu)"></i></div></div>
     <div class="card kpi"><h3>ディスク I/O</h3><div class="v" id="k-disk">–</div><div class="s" id="k-disk-s">&nbsp;</div></div>
   </div>
 
@@ -86,12 +98,18 @@
     <div class="card"><h3>CPU 使用率（直近2分）</h3><div class="chart" id="c-cpu"></div></div>
     <div class="card"><h3>メモリ使用率（直近2分）</h3><div class="chart" id="c-mem"></div></div>
     <div class="card"><h3>ネットワーク（直近2分）</h3><div class="chart" id="c-net"></div></div>
+    <div class="card hide" id="card-gpu-chart"><h3>GPU 使用率（直近2分）</h3><div class="chart" id="c-gpu"></div></div>
     <div class="card"><h3>コア別 CPU 使用率</h3><div class="chart" id="c-core"></div></div>
   </div>
 
   <div class="grid two">
     <div class="card"><h3>CPU 上位プロセス</h3><table id="t-cpu"></table></div>
     <div class="card"><h3>メモリ上位プロセス</h3><table id="t-mem"></table></div>
+  </div>
+
+  <div class="grid two hide" id="gpu-section">
+    <div class="card"><h3>GPU 詳細</h3><div id="gpu-cards"></div></div>
+    <div class="card"><h3>GPU を使っているプロセス</h3><table id="t-gpu"></table></div>
   </div>
 
   <div class="grid two">
@@ -231,8 +249,77 @@ async function tick(){
   procTable($('#t-cpu'), s.top_cpu); procTable($('#t-mem'), s.top_mem);
   $('#t-nic').innerHTML = '<tr><th>アダプター</th><th class="num">↓受信</th><th class="num">↑送信</th></tr>' +
     s.network.nics.sort((a,b)=>(b.up+b.down)-(a.up+a.down)).map(n=>`<tr><td class="name">${esc(n.name)}</td><td class="num">${fmtRate(n.down)}</td><td class="num">${fmtRate(n.up)}</td></tr>`).join('');
+  try { renderGpu(s); } catch(e){ console.error(e); }
 }
 setInterval(tick, 1000); tick();
+
+// ---------- GPU ----------
+const ENG_LABEL = {'3D':'3D','Compute':'Compute','Copy':'コピー','VideoDecode':'動画デコード','VideoEncode':'動画エンコード','VideoProcessing':'動画処理','Graphics':'Graphics'};
+const ENG_ORDER = ['3D','Compute','Copy','VideoDecode','VideoEncode','VideoProcessing'];
+const gpuHist = {};   // name -> []
+let gpuChartNames = null;
+function meter(label, pct, right, color){
+  const w = Math.max(0, Math.min(100, pct||0));
+  return `<div class="meter"><span>${label}</span><div class="bar"><i style="width:${w}%;background:${color}"></i></div><span>${right}</span></div>`;
+}
+function renderGpu(s){
+  const gpus = s.gpus || [];
+  const has = gpus.length > 0;
+  ['kpi-gpu','card-gpu-chart','gpu-section'].forEach(id => document.getElementById(id).classList.toggle('hide', !has));
+  if(!has) return;
+  const colors = [css('--gpu'), css('--gpu2'), '#8fa8ff', '#e58fff'];
+
+  // KPI：VRAM の大きい GPU（通常は外付け GPU）を代表にする
+  const main = [...gpus].sort((a,b)=>(b.dedicated_total||0)-(a.dedicated_total||0))[0];
+  $('#k-gpu').textContent = main.util==null ? '–' : main.util.toFixed(1)+' %';
+  const parts = [];
+  if(main.dedicated_used!=null && main.dedicated_total) parts.push(`VRAM ${fmtB(main.dedicated_used)} / ${fmtB(main.dedicated_total)}`);
+  if(main.temp_c!=null) parts.push(`${Math.round(main.temp_c)}°C`);
+  if(gpus.length>1) parts.push(`他 ${gpus.length-1} 台`);
+  $('#k-gpu-s').textContent = parts.join('・') || main.name;
+  $('#b-gpu').style.width = (main.util||0)+'%'; $('#b-gpu').style.background = levelColor(main.util||0) || css('--gpu');
+
+  // グラフ（GPU ごとに1本）
+  const names = gpus.map(g=>g.name);
+  if(!gpuChartNames || gpuChartNames.join('|') !== names.join('|')){
+    gpuChartNames = names;
+    if(charts['c-gpu']) charts['c-gpu'].dispose();
+    lineChart('c-gpu', names.map((n,i)=>({name:n, color:colors[i%colors.length]})), {max:100, fmt:v=>v==null?'–':v.toFixed(1)+' %', axisFmt:'{value}%'});
+  }
+  gpus.forEach(g => { gpuHist[g.name] = gpuHist[g.name] || new Array(hist.t.length-1).fill(null); push(gpuHist[g.name], g.util); });
+  charts['c-gpu'].setOption({xAxis:{data:hist.t}, series: names.map(n=>({data:gpuHist[n]}))});
+
+  // 詳細カード
+  $('#gpu-cards').innerHTML = gpus.map((g,i)=>{
+    const c = colors[i%colors.length];
+    const engs = Object.entries(g.engines||{}).sort((a,b)=>{
+      const ia = ENG_ORDER.indexOf(a[0]), ib = ENG_ORDER.indexOf(b[0]);
+      return (ia<0?99:ia)-(ib<0?99:ib);
+    });
+    let h = `<div class="gpu-card"><div class="gpu-head"><b>${esc(g.name)}</b><span class="pill">${esc(g.vendor||'')}</span>
+      <span class="u" style="color:${c}">${g.util==null?'–':g.util.toFixed(1)+' %'}</span></div>`;
+    h += engs.map(([k,v]) => meter(ENG_LABEL[k]||esc(k), v, v.toFixed(1)+' %', c)).join('');
+    if(g.dedicated_total && g.dedicated_total > (256<<20))
+      h += meter('専用メモリ (VRAM)', g.dedicated_used/g.dedicated_total*100, `${fmtB(g.dedicated_used)} / ${fmtB(g.dedicated_total)}`, css('--mem'));
+    if(g.shared_total)
+      h += meter('共有メモリ', (g.shared_used||0)/g.shared_total*100, `${fmtB(g.shared_used||0)} / ${fmtB(g.shared_total)}`, '#6b7487');
+    const ex = [];
+    if(g.temp_c!=null) ex.push(`温度 <b>${Math.round(g.temp_c)}°C</b>`);
+    if(g.power_w!=null) ex.push(`電力 <b>${g.power_w.toFixed(0)} W</b>${g.power_limit_w?` / ${g.power_limit_w.toFixed(0)} W`:''}`);
+    if(g.clock_core_mhz!=null) ex.push(`コア <b>${g.clock_core_mhz} MHz</b>`);
+    if(g.clock_mem_mhz!=null) ex.push(`メモリ <b>${g.clock_mem_mhz} MHz</b>`);
+    if(g.fan_pct!=null) ex.push(`ファン <b>${g.fan_pct}%</b>`);
+    if(ex.length) h += `<div class="gpu-extra">${ex.map(x=>`<span>${x}</span>`).join('')}</div>`;
+    else if(g.vendor!=='NVIDIA') h += `<div class="gpu-extra">温度・電力は NVIDIA GPU のみ表示できます</div>`;
+    return h + '</div>';
+  }).join('');
+
+  // プロセス
+  const ps = s.gpu_procs || [];
+  $('#t-gpu').innerHTML = '<tr><th>プロセス</th><th class="num">PID</th><th class="num">GPU</th><th class="num">VRAM</th>'+(gpus.length>1?'<th>GPU名</th>':'')+'</tr>' +
+    (ps.length ? ps.map(p=>`<tr><td class="name">${esc(p.name)}</td><td class="num muted">${p.pid}</td><td class="num">${p.util.toFixed(1)}%</td><td class="num">${p.vram?fmtB(p.vram):'–'}</td>${gpus.length>1?`<td class="name muted">${esc(p.gpu)}</td>`:''}</tr>`).join('')
+       : '<tr><td class="muted" colspan="5">GPU を使っているプロセスはありません</td></tr>');
+}
 
 let drivesCache = [];
 async function loadDrives(){
