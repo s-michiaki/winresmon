@@ -60,6 +60,12 @@ except ImportError:
     sys.exit(1)
 
 from gpu import GpuMonitor
+import fileops
+import secrets
+
+# 画面（index.html）にだけ埋め込む合言葉。他のサイトから localhost へ勝手に
+# 削除やスキャンを依頼されないよう、POST ではこれが一致しないと拒否する
+API_TOKEN = secrets.token_urlsafe(24)
 
 HOST = "127.0.0.1"
 PORT = int(os.environ.get("WINRESMON_PORT", "8765"))
@@ -419,6 +425,14 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, *args):
         pass  # アクセスログは出さない
 
+    def _host_ok(self):
+        """DNS リバインディング対策：Host ヘッダーが自分自身の場合だけ応答する"""
+        port = self.server.server_address[1]
+        return self.headers.get("Host", "") in (f"127.0.0.1:{port}", f"localhost:{port}")
+
+    def _token_ok(self):
+        return secrets.compare_digest(self.headers.get("X-WRM-Token", ""), API_TOKEN)
+
     def _json(self, obj, code=200):
         body = json.dumps(obj, ensure_ascii=False).encode("utf-8")
         self.send_response(code)
@@ -432,8 +446,10 @@ class Handler(BaseHTTPRequestHandler):
         u = urlparse(self.path)
         q = parse_qs(u.query)
         p = u.path
+        if not self._host_ok():
+            return self._json({"error": "forbidden"}, 403)
         if p in ("/", "/index.html"):
-            body = INDEX_HTML.read_bytes()
+            body = INDEX_HTML.read_bytes().replace(b"__WRM_TOKEN__", API_TOKEN.encode())
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
             self.send_header("Content-Length", str(len(body)))
@@ -465,11 +481,23 @@ class Handler(BaseHTTPRequestHandler):
         elif p == "/api/snapshot":
             d = load_snapshot(q.get("id", [""])[0])
             self._json(d if d else {"error": "not found"}, 200 if d else 404)
+        elif p == "/api/files":
+            if not self._token_ok():
+                return self._json({"error": "forbidden"}, 403)
+            path = q.get("path", [""])[0]
+            if not os.path.isdir(path):
+                return self._json({"error": f"フォルダが見つかりません: {path}"}, 404)
+            try:
+                self._json(fileops.list_files(path))
+            except OSError as e:
+                self._json({"error": f"読み取れませんでした: {e}"}, 400)
         else:
             self._json({"error": "not found"}, 404)
 
     def do_POST(self):
         u = urlparse(self.path)
+        if not (self._host_ok() and self._token_ok()):
+            return self._json({"error": "forbidden"}, 403)
         length = int(self.headers.get("Content-Length", 0) or 0)
         try:
             data = json.loads(self.rfile.read(length) or b"{}")
@@ -489,6 +517,16 @@ class Handler(BaseHTTPRequestHandler):
             if ok:
                 # 新しいウィンドウが立ち上がるので、こちらは少し待って終了
                 threading.Timer(0.8, lambda: os._exit(0)).start()
+        elif u.path == "/api/delete":
+            paths = [x for x in data.get("paths", []) if isinstance(x, str)]
+            mode = "permanent" if data.get("mode") == "permanent" else "recycle"
+            keep = [str(DATA_DIR), str(RES_DIR)] if FROZEN else [str(DATA_DIR)]
+            res = fileops.delete_paths(paths, mode, extra_keep=keep)
+            self._json({"ok": all(r["ok"] for r in res), "mode": mode, "results": res})
+        elif u.path == "/api/reveal":
+            path = data.get("path", "")
+            ok = os.path.lexists(path) and fileops.reveal(path)
+            self._json({"ok": bool(ok)})
         elif u.path == "/api/snapshot/delete":
             self._json({"ok": delete_snapshot(data.get("id", ""))})
         else:
@@ -506,6 +544,8 @@ def _make_server():
 def selftest():
     """インストーラー作成時の自動確認用。統計採取・スキャン・HTTP応答を一通り試す"""
     import urllib.request
+    import urllib.parse
+    import urllib.error
     global collector
     result = {"ok": False, "steps": []}
     try:
@@ -553,6 +593,61 @@ def selftest():
         assert snap["tree"]["size"] == 6000, f"scan size {snap['tree']['size']}"
         delete_snapshot(s["snapshot"])
         result["steps"].append("scan ok")
+
+        # --- 削除まわり ---
+        def post(path, body, token=True, host=None):
+            req = urllib.request.Request(base + path, data=json.dumps(body).encode(), method="POST",
+                                         headers={"Content-Type": "application/json"})
+            if token:
+                req.add_header("X-WRM-Token", API_TOKEN)
+            if host:
+                req.add_header("Host", host)
+            try:
+                with urllib.request.urlopen(req, timeout=60) as r:
+                    return r.status, json.loads(r.read())
+            except urllib.error.HTTPError as e:
+                return e.code, {}
+
+        victim = tmp / "a" / "f.bin"
+        st, _ = post("/api/delete", {"paths": [str(victim)], "mode": "permanent"}, token=False)
+        assert st == 403 and victim.exists(), "delete without token must be refused"
+        st, _ = post("/api/delete", {"paths": [str(victim)], "mode": "permanent"}, host="evil.example:80")
+        assert st == 403 and victim.exists(), "delete with foreign Host must be refused"
+        result["steps"].append("forged requests refused")
+
+        req = urllib.request.Request(base + "/api/files?path=" + urllib.parse.quote(str(tmp / "a")),
+                                     headers={"X-WRM-Token": API_TOKEN})
+        with urllib.request.urlopen(req, timeout=10) as r:
+            fl = json.loads(r.read())
+        assert fl["total"] == 1 and fl["files"][0]["size"] == 5000, f"files {fl}"
+        result["steps"].append("file list ok")
+
+        st, r = post("/api/delete", {"paths": [str(victim)], "mode": "permanent"})
+        assert st == 200 and r["ok"] and not victim.exists(), f"permanent delete {r}"
+        sub = tmp / "trashme"
+        sub.mkdir()
+        (sub / "x.txt").write_text("x")
+        st, r = post("/api/delete", {"paths": [str(sub)], "mode": "recycle"})
+        assert st == 200 and r["ok"] and not sub.exists(), f"recycle {r}"
+        result["steps"].append("delete ok (permanent + recycle)")
+
+        must_refuse = [os.path.abspath(os.sep), str(Path.home()), str(Path.home().parent), str(DATA_DIR)]
+        if sys.platform == "win32":
+            must_refuse += [os.environ.get("SystemRoot", r"C:\Windows"),
+                            os.path.join(os.environ.get("SystemRoot", r"C:\Windows"), "System32"),
+                            os.environ.get("ProgramFiles", r"C:\Program Files"),
+                            os.environ.get("LOCALAPPDATA", ""), os.environ.get("APPDATA", "")]
+        else:
+            must_refuse += ["/usr", "/etc/hosts"]
+        for pth in must_refuse:
+            if pth and os.path.lexists(pth):
+                ok, why = fileops.check_deletable(pth, extra_keep=[str(DATA_DIR)])
+                assert not ok, f"protected path was deletable: {pth}"
+        okp, why = fileops.check_deletable(str(tmp / "a"))
+        assert okp, f"normal folder should be deletable: {why}"
+        result["steps"].append(f"protection ok ({len(must_refuse)} paths)")
+        import shutil as _sh
+        _sh.rmtree(tmp, ignore_errors=True)
         result["ok"] = True
     except Exception as e:
         import traceback

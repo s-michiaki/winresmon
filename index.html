@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>WinResMon</title>
+<meta name="wrm-token" content="__WRM_TOKEN__">
 <script src="/static/echarts.min.js"></script>
 <style>
   :root{
@@ -70,6 +71,29 @@
   .gpu-extra{display:flex;flex-wrap:wrap;gap:6px 16px;margin-top:8px;font-size:12px;color:var(--muted)}
   .gpu-extra b{color:var(--text);font-weight:500}
   .hide{display:none!important}
+  input[type=checkbox]{accent-color:var(--accent);width:15px;height:15px;cursor:pointer;vertical-align:middle;padding:0}
+  td.ck,th.ck{width:26px;padding-right:0}
+  tr.deleted td{opacity:.45;text-decoration:line-through}
+  tr.deleted td.ck{text-decoration:none}
+  .iconbtn{background:none;border:0;color:var(--muted);cursor:pointer;padding:0 4px;font-size:13px}
+  .iconbtn:hover{color:var(--accent)}
+  .cardhead{display:flex;align-items:center;gap:8px;margin-bottom:6px}
+  .cardhead h3{text-transform:none;letter-spacing:0;margin:0;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .btn.sm{padding:3px 9px;font-size:12px}
+  #filebox{margin-top:12px;border-top:1px solid var(--line);padding-top:10px}
+  #selbar{position:fixed;left:50%;bottom:16px;transform:translateX(-50%);z-index:20;display:flex;align-items:center;gap:10px;flex-wrap:wrap;
+    background:#202634;border:1px solid var(--accent);border-radius:10px;padding:10px 14px;box-shadow:0 8px 30px rgba(0,0,0,.5);max-width:calc(100vw - 32px)}
+  #selbar .msg{font-size:13px}
+  .modal-bg{position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:30;display:flex;align-items:center;justify-content:center;padding:16px}
+  .modal{background:var(--panel);border:1px solid var(--line);border-radius:12px;width:min(640px,100%);max-height:85vh;display:flex;flex-direction:column}
+  .modal h2{font-size:16px;margin:0;padding:14px 16px;border-bottom:1px solid var(--line)}
+  .modal .body{padding:12px 16px;overflow:auto}
+  .modal .foot{padding:12px 16px;border-top:1px solid var(--line);display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap;align-items:center}
+  .modal ul{margin:6px 0;padding-left:18px;font-size:12px;word-break:break-all;max-height:220px;overflow:auto}
+  .modal label.opt{display:flex;gap:8px;align-items:flex-start;padding:8px;border:1px solid var(--line);border-radius:8px;margin-top:8px;cursor:pointer}
+  .modal label.opt.on{border-color:var(--accent);background:#1c2a36}
+  .warnbox{margin-top:10px;padding:8px 10px;border-radius:8px;background:#3a1a22;border:1px solid var(--bad);font-size:12px}
+  .okmsg{color:var(--down)} .ngmsg{color:var(--bad)}
 </style>
 </head>
 <body>
@@ -146,7 +170,7 @@
       <div class="row" style="margin-top:8px">
         <label class="muted">比較対象</label>
         <select id="cmpsel" style="flex:1"><option value="">（比較しない）</option></select>
-        <button class="btn danger" id="btn-del">選択中を削除</button>
+        <button class="btn danger" id="btn-del">スナップショットを削除</button>
       </div>
     </div>
   </div>
@@ -162,11 +186,26 @@
   </div>
 
   <div class="grid two">
-    <div class="card"><h3 id="listtitle">この階層の内訳</h3><div style="max-height:520px;overflow:auto"><table id="t-children"></table></div></div>
+    <div class="card">
+      <div class="cardhead"><h3 id="listtitle">この階層の内訳</h3>
+        <button class="btn sm" id="btn-files" disabled>📄 ファイルを表示</button></div>
+      <div style="max-height:520px;overflow:auto"><table id="t-children"></table></div>
+      <div id="filebox" class="hide">
+        <div class="cardhead"><h3 id="filetitle">ファイル</h3><button class="btn sm" id="btn-files-close">閉じる</button></div>
+        <div style="max-height:420px;overflow:auto"><table id="t-files"></table></div>
+      </div>
+    </div>
     <div class="card"><h3 id="difftitle">差分（比較対象を選ぶと表示）</h3><table id="t-diff"></table></div>
   </div>
 </section>
 </main>
+
+<div id="selbar" class="hide">
+  <span class="msg" id="selmsg"></span>
+  <button class="btn primary sm" id="btn-delsel">🗑 削除…</button>
+  <button class="btn sm" id="btn-selclear">選択解除</button>
+</div>
+<div id="modal" class="modal-bg hide"></div>
 
 <script>
 // ---------- 共通 ----------
@@ -175,8 +214,11 @@ const css = v => getComputedStyle(document.documentElement).getPropertyValue(v).
 function fmtB(b, d=1){ if(b==null) return '–'; const u=['B','KB','MB','GB','TB']; let i=0; let n=Math.abs(b); while(n>=1024&&i<u.length-1){n/=1024;i++} return (b<0?'-':'')+n.toFixed(i?d:0)+' '+u[i]; }
 const fmtRate = b => fmtB(b) + '/s';
 const esc = s => String(s).replace(/[&<>"]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const TOKEN = document.querySelector('meta[name=wrm-token]').content;
 async function api(path, body){
-  const r = await fetch(path, body ? {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)} : {});
+  const headers = {'X-WRM-Token': TOKEN};
+  const opt = body ? {method:'POST', headers:{...headers, 'Content-Type':'application/json'}, body:JSON.stringify(body)} : {headers};
+  const r = await fetch(path, opt);
   return r.json();
 }
 document.querySelectorAll('.tab').forEach(t => t.onclick = () => {
@@ -361,6 +403,7 @@ function updateCmpSelect(){
   if(same.some(s=>s.id===cur)) sel.value = cur; else { sel.value=''; cmpSnap=null; }
 }
 async function openSnapshot(id){
+  clearSelection(); deleted.clear(); closeFiles();
   curSnap = await api('/api/snapshot?id='+encodeURIComponent(id));
   focusNode = curSnap.tree;
   document.querySelectorAll('#t-snaps tr').forEach(tr=>tr.classList.toggle('sel', tr.dataset.id===id));
@@ -381,6 +424,13 @@ const palette = ['#4cc2ff','#b48cff','#3ddc97','#ff9f5a','#ffd166','#ff6b8b','#5
 function toEc(n){
   const o = {name:n.name, value:n.size, path:n.path, files:n.files};
   if(n.is_files || n.is_other) o.itemStyle = {color:'#3a4150'};
+  if(!n.is_files && !n.is_other && deleted.has(n.path)){
+    o.name = n.name + '（削除済み）';
+    o.itemStyle = {color:'#23272f', borderColor:'#3a4150'};
+    o.label = {color:'#6b7487'};
+    delete o.children;
+    return o;
+  }
   if(n.children) o.children = n.children.map(toEc);
   return o;
 }
@@ -392,7 +442,7 @@ function renderTreemap(){
       // クリックした領域を含む、1つ下の階層のフォルダへドリルダウン
       const chain = findChain(p.treePathInfo);
       const target = chain[1];
-      if(target && target.children){ focusNode = target; renderTreemap(); }
+      if(target && target.children && !deleted.has(target.path)){ focusNode = target; closeFiles(); renderTreemap(); }
     });
   }
   tm.setOption({
@@ -420,7 +470,8 @@ function findChain(info){
   // info[0] は表示中のルート（= focusNode）
   const chain = [focusNode]; let node = focusNode;
   for(let i=1;i<info.length;i++){
-    const c = (node.children||[]).find(x=>x.name===info[i].name);
+    const nm = String(info[i].name).replace(/（削除済み）$/, '');
+    const c = (node.children||[]).find(x=>x.name===nm);
     if(!c) break; chain.push(c); node = c;
   }
   return chain;
@@ -435,23 +486,34 @@ function renderFocus(){
   $('#crumbs').innerHTML = chain.map((n,i)=>`<a data-i="${i}">${esc(n.name)}</a>`).join(' › ');
   $('#crumbs').querySelectorAll('a').forEach(a => a.onclick = () => {
     focusNode = chain[+a.dataset.i];
-    renderTreemap();
+    closeFiles(); renderTreemap();
   });
   // 内訳テーブル
   const kids = focusNode.children || [];
   const cmpIdx = cmpSnap ? flatten(cmpSnap.tree) : null;
   $('#listtitle').textContent = `この階層の内訳：${focusNode.path}`;
-  $('#t-children').innerHTML = '<tr><th>名前</th><th class="num">サイズ</th><th class="num">割合</th><th class="num">ファイル数</th>'+(cmpIdx?'<th class="num">比較時から</th>':'')+'</tr>' +
+  $('#btn-files').disabled = false;
+  $('#t-children').innerHTML = '<tr><th class="ck"></th><th>名前</th><th class="num">サイズ</th><th class="num">割合</th><th class="num">ファイル数</th>'+(cmpIdx?'<th class="num">比較時から</th>':'')+'<th></th></tr>' +
     (kids.length ? kids.map(k=>{
       const pct = focusNode.size ? k.size/focusNode.size*100 : 0;
       let diff = '';
       if(cmpIdx){ const key = keyOf(k); const old = cmpIdx.get(key); const dv = old==null ? null : k.size-old;
         diff = `<td class="num ${dv>0?'pos':dv<0?'neg':''}">${dv==null?'<span class="pill">新規</span>':(dv>0?'+':'')+fmtB(dv)}</td>`; }
-      return `<tr ${k.children?`data-ci="${kids.indexOf(k)}" style="cursor:pointer"`:''}><td class="name">${k.children?'📁 ':''}${esc(k.name)}</td><td class="num">${fmtB(k.size)}</td>
+      const real = !k.is_files && !k.is_other;   // 実在するフォルダ（「直下のファイル」「その他」のまとめ行ではない）
+      const del = deleted.has(k.path) && real;
+      const ck = real ? `<input type="checkbox" class="selck" data-path="${esc(k.path)}" data-size="${k.size}" data-dir="1" ${selected.has(k.path)?'checked':''} ${del?'disabled':''}>` : '';
+      const act = real ? `<button class="iconbtn reveal" data-path="${esc(k.path)}" title="エクスプローラーで開く">📂</button>`
+                : k.is_files ? `<button class="btn sm showfiles">ファイルを選ぶ</button>` : '';
+      return `<tr class="${del?'deleted':''}" ${k.children&&!del?`data-ci="${kids.indexOf(k)}" style="cursor:pointer"`:''}><td class="ck">${ck}</td><td class="name">${k.children?'📁 ':real?'📁 ':''}${esc(k.name)}</td><td class="num">${fmtB(k.size)}</td>
         <td class="num"><div class="bar" style="width:80px;display:inline-block;vertical-align:middle;margin:0 6px 0 0"><i style="width:${pct}%;background:var(--accent)"></i></div>${pct.toFixed(1)}%</td>
-        <td class="num muted">${k.files.toLocaleString()}</td>${diff}</tr>`;}).join('')
-     : '<tr><td class="muted" colspan="5">これより下の階層は保持していません（階層数を増やして再スキャン）</td></tr>');
-  $('#t-children').querySelectorAll('tr[data-ci]').forEach(tr => tr.onclick = () => { focusNode = kids[+tr.dataset.ci]; renderTreemap(); });
+        <td class="num muted">${k.files.toLocaleString()}</td>${diff}<td>${act}</td></tr>`;}).join('')
+     : '<tr><td class="muted" colspan="7">これより下の階層は保持していません（階層数を増やして再スキャン）。ファイルは「ファイルを表示」から選べます</td></tr>');
+  $('#t-children').querySelectorAll('tr[data-ci]').forEach(tr => tr.onclick = e => {
+    if(e.target.closest('input,button')) return;
+    focusNode = kids[+tr.dataset.ci]; closeFiles(); renderTreemap();
+  });
+  bindRowControls($('#t-children'));
+  $('#t-children').querySelectorAll('.showfiles').forEach(b => b.onclick = e => { e.stopPropagation(); loadFiles(focusNode.path); });
   renderDiff();
 }
 function keyOf(n){ return (n.path + (n.is_files?'|files':n.is_other?'|other':'')).toLowerCase(); }
@@ -469,6 +531,124 @@ function renderDiff(){
   $('#difftitle').innerHTML = `差分：${cmpSnap.created} → ${curSnap.created}　<span class="${total>0?'pos':'neg'}">${total>0?'+':''}${fmtB(total)}</span>`;
   t.innerHTML = '<tr><th>フォルダ</th><th class="num">以前</th><th class="num">現在</th><th class="num">増減</th></tr>' +
     top.map(r=>`<tr><td class="name" title="${esc(r.n.path)}">${esc(r.n.is_files ? r.n.path+'（直下ファイル）' : r.n.path)}</td><td class="num muted">${r.old==null?'—':fmtB(r.old)}</td><td class="num">${fmtB(r.n.size)}</td><td class="num ${r.d>0?'pos':'neg'}">${r.d>0?'+':''}${fmtB(r.d)}</td></tr>`).join('');
+}
+
+// ---------- 選択と削除 ----------
+const selected = new Map();   // path -> {size, dir}
+const deleted = new Set();    // このスナップショット表示中に削除したパス
+function bindRowControls(root){
+  root.querySelectorAll('.selck').forEach(cb => cb.onchange = e => {
+    e.stopPropagation();
+    const p = cb.dataset.path;
+    if(cb.checked) selected.set(p, {size:+cb.dataset.size, dir:cb.dataset.dir==='1'}); else selected.delete(p);
+    updateSelBar();
+  });
+  root.querySelectorAll('.selck').forEach(cb => cb.onclick = e => e.stopPropagation());
+  root.querySelectorAll('.reveal').forEach(b => b.onclick = e => { e.stopPropagation(); api('/api/reveal', {path:b.dataset.path}); });
+}
+function updateSelBar(msgHtml){
+  const bar = $('#selbar');
+  if(msgHtml){ $('#selmsg').innerHTML = msgHtml; bar.classList.remove('hide'); $('#btn-delsel').classList.toggle('hide', !selected.size); return; }
+  if(!selected.size){ bar.classList.add('hide'); return; }
+  const total = [...selected.values()].reduce((a,b)=>a+b.size,0);
+  const nd = [...selected.values()].filter(v=>v.dir).length;
+  $('#selmsg').innerHTML = `<b>${selected.size}</b> 件を選択中（フォルダ ${nd}・ファイル ${selected.size-nd}）　合計 <b>${fmtB(total)}</b>`;
+  $('#btn-delsel').classList.remove('hide');
+  bar.classList.remove('hide');
+}
+function clearSelection(){ selected.clear(); document.querySelectorAll('.selck').forEach(c=>c.checked=false); updateSelBar(); }
+$('#btn-selclear').onclick = () => { clearSelection(); $('#selbar').classList.add('hide'); };
+
+let filesPath = null;
+function closeFiles(){ filesPath = null; $('#filebox').classList.add('hide'); }
+$('#btn-files-close').onclick = closeFiles;
+$('#btn-files').onclick = () => focusNode && loadFiles(focusNode.path);
+async function loadFiles(path){
+  filesPath = path;
+  $('#filebox').classList.remove('hide');
+  $('#filetitle').textContent = `ファイル：${path}（現在の状態を読み込み中…）`;
+  $('#t-files').innerHTML = '';
+  const r = await api('/api/files?path='+encodeURIComponent(path));
+  if(filesPath !== path) return;
+  if(r.error){ $('#filetitle').textContent = 'ファイル：'+path; $('#t-files').innerHTML = `<tr><td class="ngmsg">${esc(r.error)}</td></tr>`; return; }
+  $('#filetitle').textContent = `ファイル：${path}（${r.total.toLocaleString()} 件${r.truncated?'・大きい順に上位 '+r.files.length+' 件':''}・現在の状態）`;
+  const allck = `<input type="checkbox" id="ck-all" title="すべて選択">`;
+  $('#t-files').innerHTML = `<tr><th class="ck">${allck}</th><th>名前</th><th class="num">サイズ</th><th>更新日時</th><th></th></tr>` +
+    (r.files.length ? r.files.map(f=>{
+      const del = deleted.has(f.path);
+      return `<tr class="${del?'deleted':''}"><td class="ck"><input type="checkbox" class="selck" data-path="${esc(f.path)}" data-size="${f.size}" data-dir="0" ${selected.has(f.path)?'checked':''} ${del?'disabled':''}></td>
+        <td class="name" title="${esc(f.path)}">${esc(f.name)}</td><td class="num">${fmtB(f.size)}</td><td class="muted">${f.mtime}</td>
+        <td><button class="iconbtn reveal" data-path="${esc(f.path)}" title="エクスプローラーで表示">📂</button></td></tr>`;}).join('')
+     : '<tr><td colspan="5" class="muted">このフォルダの直下にファイルはありません</td></tr>');
+  bindRowControls($('#t-files'));
+  const all = $('#ck-all');
+  if(all) all.onchange = () => { $('#t-files').querySelectorAll('.selck:not(:disabled)').forEach(cb => { cb.checked = all.checked; cb.onchange(new Event('change')); }); };
+}
+
+$('#btn-delsel').onclick = () => openDeleteDialog();
+function openDeleteDialog(){
+  if(!selected.size) return;
+  const items = [...selected.entries()];
+  const total = items.reduce((a,[,v])=>a+v.size,0);
+  const m = $('#modal');
+  m.innerHTML = `<div class="modal" role="dialog" aria-modal="true">
+    <h2>${items.length} 件を削除します（合計 ${fmtB(total)}）</h2>
+    <div class="body">
+      <ul>${items.slice(0,200).map(([p,v])=>`<li>${v.dir?'📁':'📄'} ${esc(p)} <span class="muted">${fmtB(v.size)}</span></li>`).join('')}${items.length>200?`<li class="muted">…ほか ${items.length-200} 件</li>`:''}</ul>
+      <label class="opt on" id="opt-recycle"><input type="radio" name="dmode" value="recycle" checked>
+        <div><b>ごみ箱へ移動</b>（おすすめ）<div class="hint">あとからごみ箱で元に戻せます。ディスクの空きはごみ箱を空にしたときに増えます。</div></div></label>
+      <label class="opt" id="opt-perm"><input type="radio" name="dmode" value="permanent">
+        <div><b>完全に削除</b><div class="hint">すぐに空き容量が増えますが、元に戻せません。</div></div></label>
+      <div class="warnbox hide" id="permwarn"><label style="display:flex;gap:8px;align-items:center;cursor:pointer">
+        <input type="checkbox" id="perm-ok"> 元に戻せないことを理解したうえで削除します</label></div>
+      <div class="hint" style="margin-top:10px">表示しているサイズはスキャン時点の値です。Windows やアプリの動作に必要な場所は削除されません。</div>
+    </div>
+    <div class="foot"><span id="dstat" class="hint" style="margin-right:auto"></span>
+      <button class="btn" id="d-cancel">キャンセル</button>
+      <button class="btn primary" id="d-go">ごみ箱へ移動</button></div>
+  </div>`;
+  m.classList.remove('hide');
+  const go = $('#d-go');
+  const sync = () => {
+    const perm = m.querySelector('input[name=dmode]:checked').value === 'permanent';
+    $('#opt-recycle').classList.toggle('on', !perm); $('#opt-perm').classList.toggle('on', perm);
+    $('#permwarn').classList.toggle('hide', !perm);
+    go.textContent = perm ? '完全に削除' : 'ごみ箱へ移動';
+    go.classList.toggle('danger', perm); go.classList.toggle('primary', !perm);
+    go.disabled = perm && !$('#perm-ok').checked;
+  };
+  m.querySelectorAll('input[name=dmode]').forEach(r => r.onchange = sync);
+  $('#perm-ok').onchange = sync;
+  $('#d-cancel').onclick = () => m.classList.add('hide');
+  m.onclick = e => { if(e.target === m && !go.dataset.busy) m.classList.add('hide'); };
+  go.onclick = async () => {
+    const mode = m.querySelector('input[name=dmode]:checked').value;
+    go.disabled = true; go.dataset.busy = '1'; $('#d-cancel').disabled = true;
+    $('#dstat').textContent = mode==='permanent' ? '削除しています…' : 'ごみ箱へ移動しています…';
+    let r;
+    try { r = await api('/api/delete', {paths: items.map(([p])=>p), mode}); }
+    catch(e){ r = {results: items.map(([p])=>({path:p, ok:false, error:String(e)}))}; }
+    m.classList.add('hide');
+    showDeleteResult(r, mode);
+  };
+  sync();
+}
+function showDeleteResult(r, mode){
+  const res = r.results || [];
+  const ok = res.filter(x=>x.ok), ng = res.filter(x=>!x.ok);
+  ok.forEach(x => { deleted.add(x.path); selected.delete(x.path); });
+  const freed = ok.reduce((a,x)=>a+(x.size||0),0);
+  renderTreemap();
+  if(filesPath) loadFiles(filesPath);
+  let html = ok.length ? `<span class="okmsg">✔ ${ok.length} 件（${fmtB(freed)}）を${mode==='permanent'?'完全に削除':'ごみ箱へ移動'}しました</span>` : '';
+  if(ng.length) html += `${html?'　':''}<span class="ngmsg" title="${esc(ng.map(x=>x.path+'：'+x.error).join('\n'))}">✖ ${ng.length} 件は削除できませんでした（${esc(ng[0].error)}${ng.length>1?' ほか':''}）</span>`;
+  html += `　<button class="btn sm" id="btn-rescan">再スキャンして最新にする</button>`;
+  updateSelBar(html);
+  $('#btn-rescan').onclick = () => {
+    $('#selbar').classList.add('hide');
+    $('#scanpath').value = curSnap.root; $('#depth').value = String(curSnap.depth||4); $('#note').value = '削除後';
+    $('#btn-scan').click();
+  };
 }
 
 // スキャン操作
