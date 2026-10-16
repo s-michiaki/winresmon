@@ -19,19 +19,12 @@ Windows のリソース状況を可視化するデスクトップアプリです
 
 ## リリース手順
 
-```
-git tag v1.0.0
-git push origin v1.0.0
-```
+GitHub の **Actions → Build Windows installer → Run workflow** を開き、`release` にバージョン（例: `1.1.0`）を入力して実行します。
+ビルド・自己テスト・インストールテストがすべて通ると、タグ `v1.1.0` と Release が作られ、インストーラーが添付されます。
 
-タグを push すると GitHub Actions が次の順に処理し、成功すると Release にインストーラーが添付されます。
-
-1. PyInstaller で exe をビルド
-2. exe の自己テスト
-3. Inno Setup でインストーラーを作成
-4. サイレントインストール → 自己テスト → アンインストールで確認
-
-`main` ブランチへの push でもビルドは実行されます。この場合、インストーラーは Actions の実行結果ページの Artifacts からダウンロードできます。
+`v1.1.0` のようなタグを push しても同じように Release が作られます。
+`main` への push ではテストビルドだけを行います。インストーラーは実行結果ページの Artifacts からダウンロードできます。
+リリースノートは `RELEASE_NOTES.md` の内容が使われるので、リリース前に更新してください。
 
 ## 開発時の起動
 
