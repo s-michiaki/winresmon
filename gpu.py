@@ -207,6 +207,9 @@ class GpuMonitor:
             return
         try:
             self.adapters = list_adapters_dxgi()
+            real = [a for a in self.adapters if a["vendor_id"] != 0x1414]
+            if real:
+                self.adapters = real  # 実 GPU があれば Microsoft Basic Render Driver は表示しない
         except Exception as e:
             self.errors.append(f"DXGI: {e}")
         if not self.adapters:
@@ -327,7 +330,7 @@ class GpuMonitor:
                 "pdh": self.pdh is not None, "nvml": self.nvml is not None, "errors": list(self.errors)}
         if sys.platform == "win32":
             try:
-                info["all_adapters_incl_software"] = [a["name"] for a in list_adapters_dxgi(True)]
+                info["all_adapters_incl_software"] = [(a["name"], a["luid"], a["software"]) for a in list_adapters_dxgi(True)]
             except Exception as e:
                 info["all_adapters_incl_software"] = f"error: {e}"
             try:
@@ -335,7 +338,8 @@ class GpuMonitor:
                 time.sleep(0.5)
                 s = p.sample()
                 info["pdh_instances"] = {k: len(v) for k, v in s.items()}
-                info["pdh_engine_example"] = next(iter(s.get("engine", {})), None)
+                info["pdh_engine_luids"] = sorted({_luid_key(*ENGINE_RE.search(k).groups()[1:3]) for k in s.get("engine", {}) if ENGINE_RE.search(k)})
+                info["pdh_adapter_instances"] = list(s.get("ad_ded", {}).keys())
             except Exception as e:
                 info["pdh_instances"] = f"error: {e}"
         return info
