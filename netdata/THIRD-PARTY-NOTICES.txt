@@ -1,0 +1,15 @@
+WinResMon「通信」タブで使用しているデータ
+
+■ netdata/dbip-country-lite.mmdb
+  IP Geolocation by DB-IP (https://db-ip.com)
+  "IP to Country Lite" database
+  Licensed under the Creative Commons Attribution 4.0 International License
+  https://creativecommons.org/licenses/by/4.0/
+
+■ static/world.json
+  Made with Natural Earth. Free vector and raster map data @ naturalearthdata.com
+  1:110m Cultural Vectors, Admin 0 – Countries（パブリックドメイン）
+  座標を間引いて使用しています。
+
+■ netagent（WinResMonNetAgent.exe）
+  Microsoft.Diagnostics.Tracing.TraceEvent — MIT License

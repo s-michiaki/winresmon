@@ -94,6 +94,47 @@
   .modal label.opt.on{border-color:var(--accent);background:#1c2a36}
   .warnbox{margin-top:10px;padding:8px 10px;border-radius:8px;background:#3a1a22;border:1px solid var(--bad);font-size:12px}
   .okmsg{color:var(--down)} .ngmsg{color:var(--bad)}
+  /* ---------- 通信 ---------- */
+  .subtabs{display:flex;gap:4px;margin-bottom:10px}
+  .net-banner{display:flex;align-items:center;gap:10px;padding:8px 12px;border-radius:8px;background:#3a2f14;border:1px solid var(--warn);margin-bottom:10px;font-size:13px}
+  .net-banner span{flex:1}
+  .net-bar{display:flex;flex-wrap:wrap;gap:8px 14px;align-items:center;margin-bottom:10px}
+  .net-bar label{font-size:13px;color:var(--muted);display:flex;gap:5px;align-items:center;cursor:pointer}
+  .net-bar .rate{font-variant-numeric:tabular-nums;font-size:13px}
+  .rec-on{background:#5a1f2a!important;border-color:var(--bad)!important;color:#ffd6dd!important}
+  #rec-status{font-size:12px;color:#ff9aa9}
+  .net-grid{display:grid;grid-template-columns:400px 1fr;gap:12px}
+  @media(max-width:1100px){.net-grid{grid-template-columns:1fr}}
+  .scrollt{max-height:calc(100vh - 290px);min-height:300px;overflow:auto}
+  .scrollt table th{position:sticky;top:0;background:var(--panel);z-index:1}
+  .scrollt th.sort{cursor:pointer;user-select:none}
+  .scrollt th.sort:hover{color:var(--text)}
+  tr.cn-new td{background:#16352a}
+  tr.cn-closed td{opacity:.4}
+  #t-nproc tr{cursor:pointer}
+  #t-nproc tr.sel td{background:#22394a}
+  #t-nproc tr:hover td{background:var(--panel2)}
+  td.up{color:var(--up)} td.down{color:var(--down)}
+  td.mono,span.mono{font-family:Consolas,"Cascadia Mono",monospace;font-size:12px}
+  #geomap{height:460px}
+  .geo-grid{display:grid;grid-template-columns:1fr 380px;gap:12px}
+  @media(max-width:1100px){.geo-grid{grid-template-columns:1fr}}
+  .geo-top{display:flex;align-items:baseline;gap:12px;flex-wrap:wrap}
+  .geo-top .big{font-size:26px;font-weight:700;color:var(--up)}
+  .rank{max-height:460px;overflow:auto}
+  .rank .it{padding:7px 8px;border-bottom:1px solid var(--line);cursor:pointer;display:grid;grid-template-columns:26px 1fr;gap:4px}
+  .rank .it:hover{background:var(--panel2)} .rank .it.sel{background:#22394a}
+  .rank .no{color:var(--muted);font-weight:700}
+  .rank .hd{display:flex;gap:6px;align-items:center}
+  .rank .hd b{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .rank .sw{width:10px;height:10px;border-radius:2px;flex:none}
+  .rank .sb{height:4px;background:var(--panel2);border-radius:2px;margin:4px 0}
+  .rank .sb i{display:block;height:100%;border-radius:2px}
+  .rank .dt{font-size:11px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .tlist{max-height:340px;overflow:auto;border:1px solid var(--line);border-radius:8px;margin-top:8px}
+  .tlist label{display:flex;gap:8px;align-items:center;padding:4px 10px;cursor:pointer;font-size:13px}
+  .tlist label:hover{background:var(--panel2)}
+  .tag-live{font-size:11px;color:var(--down)}
 </style>
 </head>
 <body>
@@ -102,6 +143,7 @@
   <div class="tabs">
     <button class="tab active" data-v="live">リアルタイム</button>
     <button class="tab" data-v="storage">ストレージ</button>
+    <button class="tab" data-v="net">通信</button>
   </div>
   <div class="sys" id="sysinfo"></div>
 </header>
@@ -198,6 +240,88 @@
     <div class="card"><h3 id="difftitle">差分（比較対象を選ぶと表示）</h3><table id="t-diff"></table></div>
   </div>
 </section>
+
+<!-- ================= 通信 ================= -->
+<section class="view" id="v-net">
+  <div class="net-banner hide" id="net-banner">
+    <span id="net-banner-msg">通常権限で実行中です。接続先は表示できますが、通信量（↑↓）とドメイン名の表示には管理者権限が必要です。</span>
+    <button class="btn sm" id="btn-net-elev">🛡 管理者として再起動</button>
+  </div>
+
+  <div class="net-bar">
+    <div class="subtabs" style="margin:0">
+      <button class="tab active" data-nv="conn">接続一覧</button>
+      <button class="tab" data-nv="geo">🌍 国別マップ</button>
+    </div>
+    <span style="flex:1"></span>
+    <span class="rate" id="net-total"></span>
+    <span id="rec-status"></span>
+    <button class="btn sm" id="btn-rec-target" title="記録するプロセスを選びます（複数選択可）">🎯 記録対象：<span id="rec-target-sum">すべて</span></button>
+    <button class="btn sm" id="btn-rec">● 記録開始</button>
+    <button class="btn sm" id="btn-rec-save" disabled title="最後の記録をもう一度保存します">💾 保存</button>
+  </div>
+
+  <!-- 接続一覧 -->
+  <div id="nv-conn">
+    <div class="net-bar">
+      <input id="net-q" placeholder="🔍 プロセス名・IP・ドメイン・ポートで絞り込み" style="width:320px">
+      <label><input type="checkbox" id="nf-udp" checked> UDP</label>
+      <label><input type="checkbox" id="nf-listen"> 待受 (LISTEN)</label>
+      <label><input type="checkbox" id="nf-tw"> TIME_WAIT</label>
+      <label><input type="checkbox" id="nf-loop" checked> ループバックを隠す</label>
+      <label title="DNS の監視で名前が分からない IP を PTR レコードで逆引きします"><input type="checkbox" id="nf-rev"> 逆引き DNS</label>
+      <button class="btn sm" id="btn-net-pause">⏸ 一時停止</button>
+      <span class="hint" id="net-count" style="margin-left:auto"></span>
+    </div>
+    <div class="net-grid">
+      <div class="card">
+        <div class="cardhead"><h3>プロセス</h3><button class="btn sm" id="btn-nproc-all">すべて表示</button></div>
+        <div class="scrollt"><table id="t-nproc"></table></div>
+      </div>
+      <div class="card">
+        <div class="scrollt"><table id="t-conn"></table></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 国別マップ -->
+  <div id="nv-geo" class="hide">
+    <div class="card">
+      <div class="row" style="align-items:flex-start">
+        <div style="flex:1;min-width:280px">
+          <div class="hint">最も多く通信している国</div>
+          <div class="geo-top"><span class="big" id="geo-top">–</span><span id="geo-top-d"></span></div>
+          <div class="hint" id="geo-sum"></div>
+        </div>
+        <div class="row">
+          <span class="muted" style="font-size:13px">色の基準：</span>
+          <label class="muted" style="font-size:13px"><input type="radio" name="geom" value="bytes" checked> 通信量</label>
+          <label class="muted" style="font-size:13px"><input type="radio" name="geom" value="connections"> 接続数</label>
+          <label class="muted" style="font-size:13px"><input type="radio" name="geom" value="ips"> 宛先 IP 数</label>
+          <label class="muted" style="font-size:13px"><input type="checkbox" id="geo-local"> ローカルネットワークも含める</label>
+          <button class="btn sm" id="btn-geo-reset">集計をリセット</button>
+        </div>
+      </div>
+      <div class="hint hide" id="geo-noadmin" style="color:var(--warn)">※ 通信量は管理者権限で実行しているときだけ集計されます</div>
+    </div>
+    <div class="geo-grid" style="margin-top:12px">
+      <div class="card"><div id="geomap"></div></div>
+      <div class="card"><h3>国・地域ランキング</h3><div class="rank" id="geo-rank"></div></div>
+    </div>
+    <div class="card" style="margin-top:12px">
+      <h3 id="geo-sel-title">国を選ぶと、その国の宛先 IP が表示されます（地図か右の一覧をクリック）</h3>
+      <div style="max-height:300px;overflow:auto"><table id="t-geoip"></table></div>
+    </div>
+    <div class="row hint" style="margin-top:8px">
+      <span id="geo-db"></span>
+      <span>IP Geolocation by <b>DB-IP</b>（CC BY 4.0）／ 地図：Natural Earth</span>
+      <span style="flex:1"></span>
+      <span id="geo-db-msg"></span>
+      <button class="btn sm" id="btn-geo-update">GeoIP データベースを更新</button>
+    </div>
+    <div class="hint" style="margin-top:4px">国の判定は IP アドレスの登録国です。CDN や Anycast（Cloudflare・Google など）の IP は、実際に通信しているサーバーの場所と異なることがあります。</div>
+  </div>
+</section>
 </main>
 
 <div id="selbar" class="hide">
@@ -221,8 +345,8 @@ async function api(path, body){
   const r = await fetch(path, opt);
   return r.json();
 }
-document.querySelectorAll('.tab').forEach(t => t.onclick = () => {
-  document.querySelectorAll('.tab').forEach(x=>x.classList.toggle('active', x===t));
+document.querySelectorAll('.tab[data-v]').forEach(t => t.onclick = () => {
+  document.querySelectorAll('.tab[data-v]').forEach(x=>x.classList.toggle('active', x===t));
   document.querySelectorAll('.view').forEach(v=>v.classList.toggle('active', v.id==='v-'+t.dataset.v));
   Object.values(charts).forEach(c=>c.resize()); if(tm) tm.resize();
   if(t.dataset.v==='storage') loadSnapshots();
@@ -690,6 +814,301 @@ async function pollScan(){
 }
 // 画面を開いた時点でスキャン中なら進捗を追う
 api('/api/scan/status').then(s => { if(s.running){ $('#btn-scan').disabled=true; $('#btn-cancel').disabled=false; pollTimer=setInterval(pollScan,500);} });
+</script>
+<script>
+// ================= 通信 =================
+(() => {
+const NS = {rows:[], procs:[], selPid:null, sort:{k:'proc', d:1}, paused:false, data:null, view:'conn',
+            geoMetric:'bytes', geoIso:null, geoChart:null, mapReady:false, timer:null, geoTimer:null};
+const isNet = () => $('#v-net').classList.contains('active');
+
+// --- タブ切り替え（親タブ・子タブ） ---
+document.querySelectorAll('.tab[data-v]').forEach(t => t.addEventListener('click', () => {
+  if(t.dataset.v === 'net'){ startNet(); } else { stopNet(); }
+}));
+document.querySelectorAll('.tab[data-nv]').forEach(t => t.onclick = () => {
+  document.querySelectorAll('.tab[data-nv]').forEach(x => x.classList.toggle('active', x===t));
+  NS.view = t.dataset.nv;
+  $('#nv-conn').classList.toggle('hide', NS.view!=='conn');
+  $('#nv-geo').classList.toggle('hide', NS.view!=='geo');
+  if(NS.view==='geo'){ initMap(); loadGeo(); }
+});
+function startNet(){
+  if(!NS.timer){ NS.timer = setInterval(netTick, 1000); }
+  if(!NS.geoTimer){ NS.geoTimer = setInterval(()=>{ if(NS.view==='geo') loadGeo(); }, 2000); }
+  netTick(); loadTargetsSummary();
+  if(NS.view==='geo'){ initMap(); loadGeo(); }
+}
+function stopNet(){ clearInterval(NS.timer); clearInterval(NS.geoTimer); NS.timer = NS.geoTimer = null; }
+
+// --- 接続一覧 ---
+async function netTick(){
+  let d;
+  try { d = await api('/api/net'); } catch(e){ return; }
+  if(!d || !d.rows) return;
+  NS.data = d;
+  renderRecord(d.record);
+  const ag = d.agent || {};
+  const banner = $('#net-banner');
+  if(!d.admin){ banner.classList.remove('hide'); $('#btn-net-elev').classList.remove('hide');
+    $('#net-banner-msg').textContent = '通常権限で実行中です。接続先は表示できますが、通信量（↑↓）とドメイン名の表示には管理者権限が必要です。'; }
+  else if(!ag.traffic){ banner.classList.remove('hide'); $('#btn-net-elev').classList.add('hide');
+    $('#net-banner-msg').textContent = '通信量・ドメイン名を取得できませんでした：' + (ag.error || '補助プログラムが動いていません'); }
+  else banner.classList.add('hide');
+  $('#geo-noadmin').classList.toggle('hide', !!ag.traffic);
+  const up = d.procs.reduce((a,p)=>a+p.up,0), down = d.procs.reduce((a,p)=>a+p.down,0);
+  $('#net-total').innerHTML = ag.traffic ? `<span style="color:var(--up)">↑ ${fmtRate(up)}</span>　<span style="color:var(--down)">↓ ${fmtRate(down)}</span>` : '';
+  if(NS.paused) return;
+  NS.rows = d.rows; NS.procs = d.procs;
+  renderProcs(); renderConns();
+}
+
+function visibleRow(r){
+  if(r.proto==='UDP' && !$('#nf-udp').checked) return false;
+  if(r.listen && !$('#nf-listen').checked) return false;
+  if(r.timewait && !$('#nf-tw').checked) return false;
+  if(r.loopback && $('#nf-loop').checked) return false;
+  if(NS.selPid!==null && r.pid!==NS.selPid) return false;
+  const q = $('#net-q').value.trim().toLowerCase();
+  if(q && !(r.proc.toLowerCase().includes(q) || r.remote.toLowerCase().includes(q) || (r.host||'').toLowerCase().includes(q)
+         || r.local.toLowerCase().includes(q) || String(r.pid)===q)) return false;
+  return true;
+}
+const COLS = [
+  ['proc','プロセス'],['pid','PID','num'],['proto','種別'],['local','ローカル'],['remote','リモート'],['host','ホスト名'],
+  ['state','状態'],['up','↑ 速度','num'],['down','↓ 速度','num'],['sent','送信計','num'],['recv','受信計','num'],['first','検出','num']];
+function renderConns(){
+  const s = NS.sort;
+  const rows = NS.rows.filter(visibleRow).sort((a,b)=>{
+    const x=a[s.k], y=b[s.k];
+    return (typeof x==='number' ? x-y : String(x).localeCompare(String(y),'ja')) * s.d || a.key.localeCompare(b.key);
+  });
+  const shown = rows.slice(0, 600);
+  const ag = (NS.data && NS.data.agent) || {};
+  const head = '<tr>' + COLS.map(([k,l,c])=>`<th class="sort ${c||''}" data-k="${k}">${l}${s.k===k?(s.d>0?' ▲':' ▼'):''}</th>`).join('') + '</tr>';
+  $('#t-conn').innerHTML = head + shown.map(r=>`<tr class="${r.new?'cn-new':''} ${r.closed?'cn-closed':''}" title="${esc(r.path||'')}">
+    <td class="name">${esc(r.proc)}</td><td class="num muted">${r.pid}</td><td>${r.proto}</td>
+    <td class="mono">${esc(r.local)}</td><td class="mono">${esc(r.remote)}</td><td class="name">${esc(r.host||'')}</td>
+    <td class="muted">${esc(r.state)}</td>
+    <td class="num up">${r.up>=1?fmtRate(r.up):''}</td><td class="num down">${r.down>=1?fmtRate(r.down):''}</td>
+    <td class="num">${r.sent?fmtB(r.sent):''}</td><td class="num">${r.recv?fmtB(r.recv):''}</td>
+    <td class="num muted">${new Date(r.first*1000).toLocaleTimeString('ja-JP',{hour12:false})}</td></tr>`).join('');
+  $('#t-conn').querySelectorAll('th.sort').forEach(th => th.onclick = () => {
+    const k = th.dataset.k; NS.sort = {k, d: NS.sort.k===k ? -NS.sort.d : (['up','down','sent','recv','first'].includes(k)?-1:1)}; renderConns();
+  });
+  const open = NS.rows.filter(r=>!r.closed).length;
+  $('#net-count').textContent = `表示 ${rows.length}${rows.length>shown.length?`（先頭 ${shown.length} 件）`:''} / 接続 ${open} 件・プロセス ${NS.procs.length} 個` + (ag.traffic?'':'　※通信量は管理者権限で表示');
+}
+function renderProcs(){
+  const ps = [...NS.procs].sort((a,b)=>(b.up+b.down)-(a.up+a.down) || b.conns-a.conns || a.name.localeCompare(b.name));
+  $('#t-nproc').innerHTML = '<tr><th>プロセス</th><th class="num">接続</th><th class="num">↑</th><th class="num">↓</th><th></th></tr>' +
+    ps.map(p=>`<tr data-pid="${p.pid}" class="${NS.selPid===p.pid?'sel':''}" title="${esc((p.path||p.name)+'（PID '+p.pid+'）')}">
+      <td class="name" style="max-width:190px">${esc(p.name)}</td><td class="num">${p.conns}</td>
+      <td class="num up">${p.up>=1?fmtRate(p.up):''}</td><td class="num down">${p.down>=1?fmtRate(p.down):''}</td>
+      <td><button class="iconbtn" data-add="${esc(p.name)}" title="記録対象に追加">🎯</button></td></tr>`).join('');
+  $('#t-nproc').querySelectorAll('tr[data-pid]').forEach(tr => tr.onclick = e => {
+    if(e.target.dataset.add) return;
+    const pid = +tr.dataset.pid; NS.selPid = NS.selPid===pid ? null : pid; renderProcs(); renderConns();
+  });
+  $('#t-nproc').querySelectorAll('[data-add]').forEach(b => b.onclick = async e => {
+    e.stopPropagation();
+    if(NS.data && NS.data.record.recording){ alert('記録中は記録対象を変更できません'); return; }
+    const t = await api('/api/net/targets');
+    const sel = new Set(t.items.filter(i=>i.selected).map(i=>i.name)); sel.add(b.dataset.add);
+    await api('/api/net/targets', {record_all:false, targets:[...sel]});
+    loadTargetsSummary(); b.textContent='✔';
+  });
+}
+$('#btn-nproc-all').onclick = () => { NS.selPid = null; renderProcs(); renderConns(); };
+['#nf-udp','#nf-listen','#nf-tw','#nf-loop'].forEach(id => $(id).onchange = renderConns);
+$('#nf-rev').onchange = () => api('/api/net/options', {reverse: $('#nf-rev').checked});
+$('#net-q').oninput = renderConns;
+$('#btn-net-pause').onclick = () => { NS.paused = !NS.paused; $('#btn-net-pause').textContent = NS.paused ? '▶ 再開' : '⏸ 一時停止'; };
+$('#btn-net-elev').onclick = async () => {
+  $('#btn-net-elev').disabled = true;
+  const r = await api('/api/elevate', {});
+  if(r.ok) $('#net-banner-msg').textContent = '管理者として起動し直しています…（このウィンドウは閉じます）';
+  else { $('#btn-net-elev').disabled = false; alert(r.message); }
+};
+
+// --- 記録 ---
+function hms(sec){ sec=Math.floor(sec); return [sec/3600|0, (sec%3600)/60|0, sec%60].map(v=>String(v).padStart(2,'0')).join(':'); }
+function renderRecord(rec){
+  const b = $('#btn-rec');
+  b.textContent = rec.recording ? '■ 停止して保存' : '● 記録開始';
+  b.classList.toggle('rec-on', rec.recording);
+  $('#btn-rec-target').disabled = rec.recording;
+  $('#btn-rec-save').disabled = rec.recording || !rec.has_data;
+  $('#rec-status').textContent = rec.recording ? `記録中 ${hms(rec.elapsed)}　宛先 ${rec.count} 件`
+    : rec.has_data ? `記録済み ${rec.started.slice(11)}〜${(rec.stopped||'').slice(11)}　宛先 ${rec.count} 件` : '';
+}
+$('#btn-rec').onclick = async () => {
+  const rec = NS.data && NS.data.record;
+  if(rec && rec.recording){
+    const r = await api('/api/net/record/stop', {});
+    renderRecord(r.status); openSaveDialog(r.status);
+  } else {
+    const r = await api('/api/net/record/start', {});
+    if(!r.ok){ alert(r.message + '\n「🎯 記録対象」から選ぶか、「すべてのプロセス」にしてください。'); return; }
+    renderRecord(r.status);
+  }
+};
+$('#btn-rec-save').onclick = () => openSaveDialog(NS.data && NS.data.record);
+function openSaveDialog(rec){
+  const m = $('#modal');
+  m.innerHTML = `<div class="modal" role="dialog" aria-modal="true">
+    <h2>通信先の記録を保存</h2>
+    <div class="body">
+      <div class="hint">${rec ? `${esc(rec.started||'')} 〜 ${esc(rec.stopped||'')}　宛先 ${rec.count} 件` : ''}${rec && rec.targets ? `<br>対象：${esc(rec.targets.join(', '))}` : ''}</div>
+      <label class="opt on" id="opt-csv"><input type="radio" name="rfmt" value="csv" checked>
+        <div><b>CSV</b>（おすすめ）<div class="hint">Excel でそのまま開けます。プロセス × 宛先ごとに 1 行です。</div></div></label>
+      <label class="opt" id="opt-json"><input type="radio" name="rfmt" value="json">
+        <div><b>JSON</b><div class="hint">記録期間や対象プロセスなどの情報も含みます。プログラムで処理する場合に。</div></div></label>
+      <div id="rsave-msg" style="margin-top:10px"></div>
+    </div>
+    <div class="foot"><span class="hint" style="margin-right:auto">保存先：データフォルダ\\net_records</span>
+      <button class="btn" id="r-close">閉じる</button><button class="btn primary" id="r-go">保存</button></div>
+  </div>`;
+  m.classList.remove('hide');
+  m.querySelectorAll('input[name=rfmt]').forEach(x => x.onchange = () => {
+    const v = m.querySelector('input[name=rfmt]:checked').value;
+    $('#opt-csv').classList.toggle('on', v==='csv'); $('#opt-json').classList.toggle('on', v==='json');
+  });
+  $('#r-close').onclick = () => m.classList.add('hide');
+  m.onclick = e => { if(e.target === m) m.classList.add('hide'); };
+  $('#r-go').onclick = async () => {
+    const r = await api('/api/net/record/save', {format: m.querySelector('input[name=rfmt]:checked').value});
+    if(!r.ok){ $('#rsave-msg').innerHTML = `<span class="ngmsg">${esc(r.message)}</span>`; return; }
+    $('#rsave-msg').innerHTML = `<span class="okmsg">✔ 保存しました（宛先 ${r.count} 件）</span><br><span class="mono">${esc(r.path)}</span>
+      <br><button class="btn sm" id="r-reveal" style="margin-top:6px">📂 フォルダを開く</button>`;
+    $('#r-reveal').onclick = () => api('/api/reveal', {path: r.path});
+  };
+}
+
+// --- 記録対象 ---
+async function loadTargetsSummary(){
+  const t = await api('/api/net/targets');
+  const sel = t.items.filter(i=>i.selected).map(i=>i.name);
+  $('#rec-target-sum').textContent = t.record_all ? 'すべて' : sel.length===0 ? '未選択' : sel.length===1 ? sel[0] : `${sel[0]} ほか ${sel.length-1} 件`;
+}
+$('#btn-rec-target').onclick = async () => {
+  const t = await api('/api/net/targets');
+  const m = $('#modal');
+  m.innerHTML = `<div class="modal" role="dialog" aria-modal="true">
+    <h2>記録対象のプロセス</h2>
+    <div class="body">
+      <label class="opt ${t.record_all?'on':''}" id="opt-all"><input type="radio" name="tmode" value="all" ${t.record_all?'checked':''}>
+        <div><b>すべてのプロセスを記録</b></div></label>
+      <label class="opt ${t.record_all?'':'on'}" id="opt-sel"><input type="radio" name="tmode" value="sel" ${t.record_all?'':'checked'}>
+        <div><b>選択したプロセスだけ記録</b><div class="hint">プロセス名で選ぶので、同じアプリの別プロセスや記録中に再起動したプロセスも対象になります。</div></div></label>
+      <div id="tsel-box">
+        <div class="row" style="margin-top:8px"><input id="t-q" placeholder="🔍 プロセス名で絞り込み" style="flex:1">
+          <button class="btn sm" id="t-comm">通信中のものをすべて選択</button><button class="btn sm" id="t-none">選択解除</button></div>
+        <div class="tlist" id="t-list">${t.items.map(i=>`<label data-n="${esc(i.name.toLowerCase())}"><input type="checkbox" value="${esc(i.name)}" ${i.selected?'checked':''} data-comm="${i.communicating?1:0}">
+          ${esc(i.name)} ${i.communicating?'<span class="tag-live">● 通信中</span>':''}${!i.running?'<span class="muted" style="font-size:11px">（実行していません）</span>':''}</label>`).join('')}</div>
+      </div>
+    </div>
+    <div class="foot"><span class="hint" id="t-count" style="margin-right:auto"></span>
+      <button class="btn" id="t-cancel">キャンセル</button><button class="btn primary" id="t-ok">OK</button></div>
+  </div>`;
+  m.classList.remove('hide');
+  const sync = () => {
+    const all = m.querySelector('input[name=tmode]:checked').value === 'all';
+    $('#opt-all').classList.toggle('on', all); $('#opt-sel').classList.toggle('on', !all);
+    $('#tsel-box').style.opacity = all ? .4 : 1; $('#tsel-box').style.pointerEvents = all ? 'none' : '';
+    const n = m.querySelectorAll('#t-list input:checked').length;
+    $('#t-count').textContent = all ? 'すべてのプロセスを記録します' : `${n} 個のプロセスを選択中`;
+  };
+  m.querySelectorAll('input[name=tmode]').forEach(x => x.onchange = sync);
+  m.querySelectorAll('#t-list input').forEach(x => x.onchange = sync);
+  $('#t-q').oninput = () => { const q=$('#t-q').value.trim().toLowerCase(); m.querySelectorAll('#t-list label').forEach(l => l.classList.toggle('hide', q && !l.dataset.n.includes(q))); };
+  $('#t-comm').onclick = () => { m.querySelectorAll('#t-list input[data-comm="1"]').forEach(x=>x.checked=true); sync(); };
+  $('#t-none').onclick = () => { m.querySelectorAll('#t-list input').forEach(x=>x.checked=false); sync(); };
+  $('#t-cancel').onclick = () => m.classList.add('hide');
+  m.onclick = e => { if(e.target === m) m.classList.add('hide'); };
+  $('#t-ok').onclick = async () => {
+    const all = m.querySelector('input[name=tmode]:checked').value === 'all';
+    await api('/api/net/targets', {record_all: all, targets: [...m.querySelectorAll('#t-list input:checked')].map(x=>x.value)});
+    m.classList.add('hide'); loadTargetsSummary();
+  };
+  sync();
+};
+
+// --- 国別マップ ---
+const RAMP = ['#22406a','#3478e0','#36b3b0','#e8c547','#f0743c'];
+function rampColor(t){
+  t = Math.max(0, Math.min(1, t)); const seg = t*(RAMP.length-1); const i = Math.min(seg|0, RAMP.length-2); const f = seg-i;
+  const a = RAMP[i].match(/\w\w/g).map(h=>parseInt(h,16)), b = RAMP[i+1].match(/\w\w/g).map(h=>parseInt(h,16));
+  return '#'+a.map((v,k)=>Math.round(v+(b[k]-v)*f).toString(16).padStart(2,'0')).join('');
+}
+const logT = (v, max) => v>0 && max>0 ? Math.log(1+v)/Math.log(1+max) : 0;
+function fmtMetric(v){ return NS.geoMetric==='bytes' ? fmtB(v) : NS.geoMetric==='connections' ? `${v.toLocaleString()} 接続` : `${v.toLocaleString()} IP`; }
+let jaNames = {};
+async function initMap(){
+  if(NS.mapReady) { NS.geoChart.resize(); return; }
+  const world = await (await fetch('/static/world.json')).json();
+  world.features.forEach(f => jaNames[f.properties.name] = f.properties.ja);
+  echarts.registerMap('wrm-world', world);
+  NS.geoChart = echarts.init($('#geomap'));
+  NS.geoChart.setOption({
+    tooltip:{trigger:'item', formatter: p => {
+      const d = p.data; const name = jaNames[p.name] || p.name;
+      if(!d || !d.raw) return esc(name);
+      return `<b>${esc(d.raw.name)}</b><br>${fmtMetric(d.raw.value)}（${(d.raw.share*100).toFixed(1)}%）<br>${d.raw.ips} IP・${esc(d.raw.procs.slice(0,3).join(', '))}`;
+    }},
+    series:[{type:'map', map:'wrm-world', roam:true, scaleLimit:{min:1, max:8}, top:10, bottom:10, left:10, right:10,
+      itemStyle:{areaColor:'#2a2f3a', borderColor:'#0f1218', borderWidth:.6},
+      emphasis:{label:{show:false}, itemStyle:{areaColor:null, borderColor:'#fff', borderWidth:1.2}},
+      select:{label:{show:false}, itemStyle:{borderColor:'#fff', borderWidth:2}},
+      selectedMode:'single', data:[]}]
+  });
+  NS.geoChart.on('click', p => selectCountry(p.name));
+  window.addEventListener('resize', () => NS.geoChart && NS.geoChart.resize());
+  NS.mapReady = true;
+}
+async function loadGeo(){
+  if(!NS.mapReady) return;
+  const g = await api(`/api/net/countries?metric=${NS.geoMetric}&local=${$('#geo-local').checked?1:0}`);
+  NS.geo = g;
+  $('#geo-top').textContent = g.top ? g.top.name : 'まだデータがありません';
+  $('#geo-top-d').textContent = g.top ? `${fmtMetric(g.top.value)}・全体の ${(g.top.share*100).toFixed(1)}%` : '';
+  $('#geo-sum').textContent = `${g.rows.length} か国・地域 / 宛先 ${g.ip_count.toLocaleString()} IP / ${g.since} から集計`;
+  $('#geo-db').textContent = g.db.build ? `GeoIP：DB-IP Country Lite（${g.db.build} 版）` : `GeoIP：${g.db.error||'-'}`;
+  NS.geoChart.setOption({series:[{data: g.rows.filter(r=>r.value>0).map(r => ({name:r.iso, value:r.value, raw:r,
+    selected: r.iso===NS.geoIso, itemStyle:{areaColor: rampColor(logT(r.value, g.max))}}))}]});
+  $('#geo-rank').innerHTML = g.rows.map((r,i)=>{ const c = r.value>0 ? rampColor(logT(r.value, g.max)) : '#3a3c43';
+    return `<div class="it ${r.iso===NS.geoIso?'sel':''}" data-iso="${esc(r.iso)}"><span class="no">${i+1}</span><div>
+      <div class="hd"><span class="sw" style="background:${c}"></span><b>${esc(r.name)}</b><span class="mono">${fmtMetric(r.value)}</span><span class="muted mono">${(r.share*100).toFixed(1)}%</span></div>
+      <div class="sb"><i style="width:${(r.share*100).toFixed(1)}%;background:${c}"></i></div>
+      <div class="dt">↑ ${fmtB(r.sent)}　↓ ${fmtB(r.recv)}　·　${r.conns.toLocaleString()} 接続　·　${r.ips.toLocaleString()} IP</div>
+      <div class="dt">${esc(r.procs.slice(0,4).join(', '))}${r.procs.length>4?` ほか ${r.procs.length-4}`:''}</div></div></div>`; }).join('')
+    || '<div class="hint" style="padding:10px">まだ通信がありません</div>';
+  $('#geo-rank').querySelectorAll('.it').forEach(el => el.onclick = () => selectCountry(el.dataset.iso));
+  if(NS.geoIso) loadCountryIps();
+}
+function selectCountry(iso){
+  NS.geoIso = NS.geoIso===iso ? null : iso;
+  $('#geo-rank').querySelectorAll('.it').forEach(el => el.classList.toggle('sel', el.dataset.iso===NS.geoIso));
+  if(!NS.geoIso){ $('#geo-sel-title').textContent='国を選ぶと、その国の宛先 IP が表示されます（地図か右の一覧をクリック）'; $('#t-geoip').innerHTML=''; return; }
+  loadCountryIps(); loadGeo();
+}
+async function loadCountryIps(){
+  const ips = await api('/api/net/country?iso=' + encodeURIComponent(NS.geoIso));
+  const r = NS.geo && NS.geo.rows.find(x=>x.iso===NS.geoIso);
+  $('#geo-sel-title').textContent = `${r ? r.name : (jaNames[NS.geoIso]||NS.geoIso)} の宛先 IP（${ips.length} 件）`;
+  $('#t-geoip').innerHTML = '<tr><th>宛先 IP</th><th>ホスト名</th><th>プロセス</th><th class="num">接続数</th><th class="num">送信</th><th class="num">受信</th></tr>' +
+    ips.map(x=>`<tr><td class="mono">${esc(x.ip)}</td><td class="name">${esc(x.host||'')}</td><td class="name">${esc(x.procs.join(', '))}</td>
+      <td class="num">${x.conns}</td><td class="num up">${x.sent?fmtB(x.sent):''}</td><td class="num down">${x.recv?fmtB(x.recv):''}</td></tr>`).join('');
+}
+document.querySelectorAll('input[name=geom]').forEach(x => x.onchange = () => { NS.geoMetric = x.value; loadGeo(); });
+$('#geo-local').onchange = loadGeo;
+$('#btn-geo-reset').onclick = async () => { if(!confirm('国別の集計をリセットしますか？')) return; await api('/api/net/countries/reset', {}); NS.geoIso=null; selectCountry(null); loadGeo(); };
+$('#btn-geo-update').onclick = async () => {
+  $('#btn-geo-update').disabled = true; $('#geo-db-msg').textContent = 'ダウンロード中…';
+  const r = await api('/api/net/geoip/update', {});
+  $('#geo-db-msg').textContent = r.message; $('#btn-geo-update').disabled = false; loadGeo();
+};
+})();
 </script>
 </body>
 </html>

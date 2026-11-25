@@ -1,0 +1,32 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    WinResMon の「通信」タブ用の補助プログラム（画面なし）。
+    ETW でプロセス・接続ごとの通信量と DNS 名を取得し、1 秒ごとに JSON Lines で標準出力へ書く。
+    管理者権限が必要。WinResMon（app.py）が起動・終了を管理する。
+  -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>WinResMonNetAgent</AssemblyName>
+    <RootNamespace>WinResMonNetAgent</RootNamespace>
+    <InvariantGlobalization>true</InvariantGlobalization>
+
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <SelfContained>true</SelfContained>
+    <PublishSingleFile>true</PublishSingleFile>
+    <!-- TraceEvent は自分のフォルダからネイティブ DLL を読むので、起動時に一時フォルダへ展開する -->
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+    <IncludeAllContentForSelfExtract>true</IncludeAllContentForSelfExtract>
+    <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
+    <DebugType>embedded</DebugType>
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Diagnostics.Tracing.TraceEvent" Version="4.0.0" />
+  </ItemGroup>
+
+</Project>

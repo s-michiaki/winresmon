@@ -2,6 +2,7 @@
 WinResMon - Windows リソースモニター
   - CPU / メモリ / ネットワーク / ディスクI/O のリアルタイム表示
   - ディレクトリごとのストレージ容量スキャン（スナップショット保存・過去時点の表示・比較）
+  - 通信：どのアプリがどこと通信しているか（接続一覧・記録・国別マップ。netmon.py）
 
 依存: psutil（必須）, pywebview（専用ウィンドウ表示。無ければブラウザで開く）
 起動: python app.py            → 専用ウィンドウで開く
@@ -30,6 +31,18 @@ FROZEN = getattr(sys, "frozen", False)  # PyInstaller でビルドされた exe 
 RES_DIR = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
 INDEX_HTML = RES_DIR / "index.html"
 STATIC_DIR = RES_DIR / "static"
+NETDATA_DIR = RES_DIR / "netdata"   # GeoIP データベース
+
+
+def _agent_exe():
+    """通信量・DNS 名を取る補助プログラム（ETW）。exe では同梱版、開発時は netagent/publish の出力を使う"""
+    if os.environ.get("WINRESMON_NETAGENT"):
+        return Path(os.environ["WINRESMON_NETAGENT"])
+    for p in (RES_DIR / "netagent" / "WinResMonNetAgent.exe",
+              Path(__file__).resolve().parent / "netagent" / "publish" / "WinResMonNetAgent.exe"):
+        if p.is_file():
+            return p
+    return None
 
 
 def _data_dir():
@@ -61,6 +74,7 @@ except ImportError:
 
 from gpu import GpuMonitor
 import fileops
+import netmon
 import secrets
 
 # 画面（index.html）にだけ埋め込む合言葉。他のサイトから localhost へ勝手に
@@ -419,6 +433,7 @@ def delete_snapshot(snap_id):
 # ---------------------------------------------------------------------------
 collector = None
 scanner = Scanner()
+net = None  # netmon.NetMonitor
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -461,7 +476,7 @@ class Handler(BaseHTTPRequestHandler):
             if not f.is_file():
                 return self._json({"error": "not found"}, 404)
             body = f.read_bytes()
-            ctype = {".js": "application/javascript", ".css": "text/css"}.get(f.suffix, "application/octet-stream")
+            ctype = {".js": "application/javascript", ".css": "text/css", ".json": "application/json"}.get(f.suffix, "application/octet-stream")
             self.send_response(200)
             self.send_header("Content-Type", ctype + "; charset=utf-8")
             self.send_header("Content-Length", str(len(body)))
@@ -481,6 +496,20 @@ class Handler(BaseHTTPRequestHandler):
         elif p == "/api/snapshot":
             d = load_snapshot(q.get("id", [""])[0])
             self._json(d if d else {"error": "not found"}, 200 if d else 404)
+        elif p.startswith("/api/net"):
+            # 通信先はプライバシーに関わるので、画面に埋め込んだ合言葉がある場合だけ返す
+            if not self._token_ok():
+                return self._json({"error": "forbidden"}, 403)
+            if p == "/api/net":
+                self._json(net.snapshot())
+            elif p == "/api/net/countries":
+                self._json(net.countries(q.get("metric", ["bytes"])[0], q.get("local", ["0"])[0] == "1"))
+            elif p == "/api/net/country":
+                self._json(net.country_ips(q.get("iso", [""])[0]))
+            elif p == "/api/net/targets":
+                self._json(net.target_candidates())
+            else:
+                self._json({"error": "not found"}, 404)
         elif p == "/api/files":
             if not self._token_ok():
                 return self._json({"error": "forbidden"}, 403)
@@ -529,6 +558,30 @@ class Handler(BaseHTTPRequestHandler):
             self._json({"ok": bool(ok)})
         elif u.path == "/api/snapshot/delete":
             self._json({"ok": delete_snapshot(data.get("id", ""))})
+        elif u.path == "/api/net/options":
+            net.reverse_enabled = bool(data.get("reverse"))
+            self._json({"ok": True})
+        elif u.path == "/api/net/targets":
+            self._json({"ok": True, "settings": net.save_settings(data.get("record_all", True), data.get("targets", []))})
+        elif u.path == "/api/net/record/start":
+            ok, msg = net.record_start(data.get("record_all"), data.get("targets"))
+            self._json({"ok": ok, "message": msg, "status": net.recorder.status()}, 200 if ok else 400)
+        elif u.path == "/api/net/record/stop":
+            self._json({"ok": True, "status": net.record_stop()})
+        elif u.path == "/api/net/record/save":
+            try:
+                path, n = net.record_save(data.get("format", "csv"))
+                self._json({"ok": True, "path": path, "count": n})
+            except OSError as e:
+                self._json({"ok": False, "message": f"保存できませんでした: {e}"}, 400)
+        elif u.path == "/api/net/countries/reset":
+            net.stats.reset()
+            self._json({"ok": True})
+        elif u.path == "/api/net/geoip/update":
+            try:
+                self._json({"ok": True, "message": net.geo.update()})
+            except Exception as e:
+                self._json({"ok": False, "message": str(e)}, 400)
         else:
             self._json({"error": "not found"}, 404)
 
@@ -546,7 +599,7 @@ def selftest():
     import urllib.request
     import urllib.parse
     import urllib.error
-    global collector
+    global collector, net
     result = {"ok": False, "steps": []}
     try:
         collector = StatsCollector(0.5)
@@ -646,6 +699,104 @@ def selftest():
         okp, why = fileops.check_deletable(str(tmp / "a"))
         assert okp, f"normal folder should be deletable: {why}"
         result["steps"].append(f"protection ok ({len(must_refuse)} paths)")
+
+        # --- 通信タブ ---
+        admin = is_admin()
+        net = netmon.NetMonitor(DATA_DIR, NETDATA_DIR, agent_exe=_agent_exe(), admin=admin, interval=0.5)
+
+        def gett(path):
+            req = urllib.request.Request(base + path, headers={"X-WRM-Token": API_TOKEN})
+            with urllib.request.urlopen(req, timeout=30) as r:
+                return json.loads(r.read())
+
+        try:
+            urllib.request.urlopen(base + "/api/net", timeout=10)
+            raise AssertionError("/api/net without token must be refused")
+        except urllib.error.HTTPError as e:
+            assert e.code == 403, f"/api/net without token: {e.code}"
+
+        def make_traffic():
+            for url in ("https://www.example.org/", "https://github.com/"):
+                try:
+                    urllib.request.urlopen(url, timeout=15).read()
+                except Exception as e:
+                    result["steps"].append(f"(fetch {url} failed: {e})")
+
+        me = psutil.Process().name()
+        hold = socket.create_connection(("www.example.org", 443), timeout=15)  # 接続を 1 本開いたままにする
+        try:
+            if admin:
+                assert net.agent.ready.wait(20), "agent did not become ready"
+                st_a = net.agent.state
+                assert st_a["traffic"] and st_a["dns"], f"agent state {st_a}"
+                result["steps"].append(f"net agent ready {st_a}")
+
+            # 記録：自分のプロセスだけを対象にする
+            st, r = post("/api/net/record/start", {"record_all": False, "targets": [me]})
+            assert st == 200 and r["ok"], f"record start {r}"
+            time.sleep(1.2)
+            make_traffic()
+            time.sleep(2.0)
+            snap = gett("/api/net")
+            mine = [x for x in snap["rows"] if x["pid"] == os.getpid() and x["proto"] == "TCP" and x["raddr"]]
+            assert mine, "own TCP connection not found in /api/net"
+            result["steps"].append(f"net table ok rows={len(snap['rows'])} procs={len(snap['procs'])} mine={len(mine)}")
+
+            if admin:
+                got = 0
+                for _ in range(20):
+                    snap = gett("/api/net")
+                    got = sum(p["sent"] + p["recv"] for p in snap["procs"] if p["pid"] == os.getpid())
+                    if got > 0:
+                        break
+                    make_traffic()
+                    time.sleep(0.5)
+                assert got > 0, "ETW traffic for own process not seen"
+                for _ in range(20):
+                    if net.agent.dns:
+                        break
+                    time.sleep(0.5)
+                assert net.agent.dns, "no DNS names from ETW"
+                hosts = sorted({x["host"] for x in snap["rows"] if x["host"]})[:4]
+                result["steps"].append(f"net etw ok own_bytes={got} dns={len(net.agent.dns)} hosts={hosts}")
+            else:
+                result["steps"].append("net etw skipped (not admin)")
+
+            st, r = post("/api/net/record/stop", {})
+            assert st == 200 and r["status"]["count"] > 0, f"record stop {r}"
+            st, rc = post("/api/net/record/save", {"format": "csv"})
+            st2, rj = post("/api/net/record/save", {"format": "json"})
+            assert rc["ok"] and rj["ok"], f"record save {rc} {rj}"
+            csv_text = Path(rc["path"]).read_text(encoding="utf-8-sig")
+            assert csv_text.startswith("プロセス名,") and me in csv_text, "csv content"
+            doc = json.loads(Path(rj["path"]).read_text(encoding="utf-8"))
+            assert doc["targets"] == [me.lower()] and doc["destinations"], "json content"
+            assert all(d["process"].lower() == me.lower() for d in doc["destinations"]), "target filter"
+            result["steps"].append(f"net record ok ({rc['count']} destinations)")
+
+            # 対象外のプロセスだけを選んだ場合は何も記録されない
+            post("/api/net/record/start", {"record_all": False, "targets": ["no-such-process.exe"]})
+            make_traffic()
+            time.sleep(1.5)
+            st, r = post("/api/net/record/stop", {})
+            assert r["status"]["count"] == 0, f"non-target recorded {r}"
+            post("/api/net/targets", {"record_all": True, "targets": []})
+            result["steps"].append("net record target filter ok")
+        finally:
+            hold.close()
+
+        iso_us, iso_lan = net.geo.lookup("8.8.8.8")[0], net.geo.lookup("192.168.0.1")[0]
+        assert iso_us == "US" and iso_lan == "LAN", f"geoip {iso_us} {iso_lan} {net.geo.error}"
+        world = json.loads(get("/static/world.json")[1])
+        assert len(world["features"]) > 150, "world.json"
+        c = gett("/api/net/countries?metric=connections")
+        assert c["rows"] and c["top"], f"countries {c}"
+        ips = gett("/api/net/country?iso=" + c["top"]["iso"])
+        assert ips, "country ips"
+        tg = gett("/api/net/targets")
+        assert any(i["name"].lower() == me.lower() for i in tg["items"]), "targets list"
+        result["steps"].append(f"net geo ok db={c['db']['build']} top={c['top']['iso']}/{c['top']['name']} countries={len(c['rows'])}")
+        net.close()
         import shutil as _sh
         _sh.rmtree(tmp, ignore_errors=True)
         result["ok"] = True
@@ -660,7 +811,7 @@ def selftest():
 
 
 def main():
-    global collector
+    global collector, net
     if "--selftest" in sys.argv:
         sys.exit(selftest())
 
@@ -671,6 +822,7 @@ def main():
         print("管理者として起動できなかったため、通常権限で起動します")
 
     collector = StatsCollector(1.0)
+    net = netmon.NetMonitor(DATA_DIR, NETDATA_DIR, agent_exe=_agent_exe(), admin=is_admin())
     server = _make_server()
     url = f"http://{HOST}:{server.server_address[1]}/"
     print(f"{APP_NAME} {APP_VERSION} 起動: {url}  データ: {DATA_DIR}")

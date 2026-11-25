@@ -25,6 +25,14 @@ jobs:
         with:
           python-version: "3.12"
 
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
+      # 「通信」タブの補助プログラム（ETW で通信量・DNS 名を取得。C#）
+      - name: Build network agent
+        run: dotnet publish netagent/WinResMonNetAgent.csproj -c Release -o netagent/publish
+
       - name: Decide version
         id: ver
         shell: pwsh
@@ -57,6 +65,8 @@ jobs:
           --icon assets/icon.ico
           --add-data "index.html;."
           --add-data "static;static"
+          --add-data "netdata;netdata"
+          --add-data "netagent/publish/WinResMonNetAgent.exe;netagent"
           app.py
 
       - name: Self-test the built exe
